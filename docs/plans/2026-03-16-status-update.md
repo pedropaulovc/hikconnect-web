@@ -78,11 +78,21 @@ Attempted to load `libezstreamclient.so` outside Android.
 
 | Resource | Details |
 |----------|---------|
-| Hetzner CAX11 | `178.104.67.226`, ARM64, 2 vCPU, 4GB RAM, Ubuntu 24.04 |
-| redroid | Android 14 in Docker, Hik-Connect installed |
+| ~~Hetzner CAX11~~ | ~~`178.104.67.226`, ARM64, 2 vCPU, 4GB RAM, Ubuntu 24.04~~ **DELETED 2026-03-17** — compromised via exposed ADB port, see [Incident Report](#incident-report-2026-03-17) |
+| ~~redroid~~ | ~~Android 14 in Docker, Hik-Connect installed~~ **Lost with server** |
 | Frida gadget | Working inside redroid via LD_PRELOAD wrap.sh |
 | Android emulator (local) | WSL2, x86_64 with ARM translation, used for Phase 2 capture |
 | OCI | Account exists (us-sanjose-1), no ARM capacity available |
+
+## Incident Report (2026-03-17)
+
+**What happened:** The Hetzner CAX11 server running redroid was compromised via its exposed ADB port (TCP 5555). An automated ADB worm connected to the unauthenticated ADB service, obtained shell access to the Android container, and used it to scan ~230 other Hetzner IPs on port 5555 within 3 seconds. Hetzner detected the netscan and issued an abuse complaint (ID: 2603:MHNJ7APBQSWE).
+
+**Root cause:** The redroid Docker container was started with ADB port 5555 mapped to `0.0.0.0` (all interfaces) instead of `127.0.0.1` (localhost only). ADB provides unauthenticated root shell access by default, making this equivalent to leaving an open root shell on the internet.
+
+**Resolution:** Server deleted immediately. No sensitive data was stored on the server (only the Hik-Connect APK and Frida scripts, all of which are in this repo).
+
+**Prevention:** See [Security Requirements for redroid Deployment](#security-requirements-for-redroid-deployment) below.
 
 ## Approaches Evaluated
 
@@ -110,3 +120,54 @@ Write a minimal Android app/service that calls `NativeApi.initSDK()` / `createPr
 
 ### 4. Full UDP P2P protocol RE (high effort)
 Use the Frida captures + packet dumps to reverse engineer the CAS broker protocol, STUN handshake, and UDP P2P framing. Build a Node.js implementation from scratch. Most independent but 4-6 weeks of work.
+
+---
+
+## Security Requirements for redroid Deployment
+
+> **Added 2026-03-17** after ADB port compromise incident. These are mandatory for any future redroid/Android emulator deployment.
+
+### Network binding rules
+
+1. **NEVER expose ADB (port 5555) to `0.0.0.0`**. Always bind to localhost:
+   ```bash
+   # CORRECT
+   docker run -d --privileged -p 127.0.0.1:5555:5555 redroid/redroid:14.0.0-latest
+
+   # WRONG — allows anyone on the internet to get root shell
+   docker run -d --privileged -p 5555:5555 redroid/redroid:14.0.0-latest
+   ```
+
+2. **Access ADB via SSH tunnel only:**
+   ```bash
+   ssh -L 5555:127.0.0.1:5555 root@<server-ip>
+   adb connect 127.0.0.1:5555
+   ```
+
+3. **scrcpy via SSH tunnel:**
+   ```bash
+   ssh -L 5555:127.0.0.1:5555 root@<server-ip>
+   scrcpy -s 127.0.0.1:5555
+   ```
+
+### Firewall rules (apply on every new server)
+
+```bash
+# Default deny inbound, allow only SSH
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow 22/tcp
+ufw enable
+
+# Explicitly block ADB even if Docker tries to bypass ufw
+iptables -I DOCKER-USER -p tcp --dport 5555 -j DROP
+iptables -I DOCKER-USER -p tcp --dport 5555 -s 127.0.0.1 -j ACCEPT
+```
+
+### Server provisioning checklist
+
+- [ ] UFW enabled with default deny before starting any containers
+- [ ] ADB port bound to `127.0.0.1` only
+- [ ] `DOCKER-USER` iptables chain blocks 5555 from non-localhost
+- [ ] Verify with `ss -tlnp | grep 5555` — must show `127.0.0.1:5555`, not `0.0.0.0:5555`
+- [ ] No secrets stored on the server (everything in repo or env vars via SSH)
