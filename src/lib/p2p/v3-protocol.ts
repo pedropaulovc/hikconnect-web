@@ -1,50 +1,247 @@
+// V3 Protocol - Wire format reverse-engineered from libezstreamclient.so via Ghidra
+// See docs/re/v3-protocol-opcodes.md for full specification
+
+// --- Constants ---
+
+export const V3_MAGIC = 0xe2
+
+export const V3_HEADER_LEN = 12
+
+// Opcodes
+export const Opcode = {
+  TRANSFOR_SETUP: 0x0b00,
+  P2P_SETUP: 0x0b02,
+  TRANSFOR_CTRL: 0x0b03,
+  TRANSFOR_DATA: 0x0b04,
+  TRANSFOR_DATA2: 0x0b05,
+  PLAY_REQUEST: 0x0c02,
+  TEARDOWN: 0x0c04,
+  VOICE_TALK: 0x0c07,
+  CT_CHECK: 0x0c08,
+  STREAM_CTRL: 0x0c0a,
+  DATA_LINK: 0x0c0b,
+  PLAYBACK_PAUSE: 0x0c10,
+  PLAYBACK_RESUME: 0x0c12,
+  PLAYBACK_SEEK: 0x0c14,
+  PLAYBACK_SEARCH: 0x0c16,
+  PLAYBACK_CTRL3: 0x0c18,
+  TRANSPARENT: 0x0d00,
+  TRANSPARENT2: 0x0d02,
+} as const
+
+// Attribute tags
+export const AttrTag = {
+  TRANSFOR_DATA: 0x00,
+  EXPAND_KEY_VERSION: 0x01,
+  CLIENT_ID: 0x02,
+  DEVICE_CHANNEL: 0x03,
+  BUS_TYPE_ENC: 0x04,
+  SESSION_KEY: 0x05,
+  SESSION_INFO: 0x06,
+  LARGE_DATA: 0x07,
+  CT_STEP: 0x09,
+  CT_DATA: 0x0a,
+  BUS_TYPE_PREVIEW: 0x71,
+  BUS_TYPE: 0x76,
+  CHANNEL_NO: 0x77,
+  STREAM_TYPE: 0x78,
+  STREAM_INFO: 0x79,
+  START_TIME: 0x7a,
+  STOP_TIME: 0x7b,
+  STREAM_PARAM: 0x7c,
+  DEVICE_SESSION_ALT: 0x7d,
+  STREAM_SESSION: 0x7e,
+  STREAM_CONTROL: 0x80,
+  VOICE_ENCODING: 0x81,
+  PORT_COUNT: 0x82,
+  STREAM_META: 0x83,
+  DEVICE_SESSION: 0x84,
+  SEEK_RATE: 0x85,
+  DATA_LINK_VAL: 0x87,
+  TRANSPARENT_EXT: 0x8d,
+  EXT_PARAM1: 0xae,
+  EXT_PARAM2: 0xaf,
+  TIME_SEGMENT: 0xb0,
+  SEEK_META: 0xb1,
+  OPT_META1: 0xb2,
+  OPT_META2: 0xb3,
+  OPT_META3: 0xb4,
+  STREAM_FLAG: 0xb5,
+  OPT_META4: 0xb6,
+  SEARCH_EXT: 0xb8,
+  END_MARKER: 0xff,
+} as const
+
+// --- Types ---
+
 export type V3Attribute = { tag: number; value: Buffer }
+
+export type V3MaskFlags = {
+  encrypt: boolean
+  saltVersion: number
+  saltIndex: number
+  expandHeader: boolean
+  is2BLen: boolean
+}
 
 export type V3Message = {
   msgType: number
+  seqNum: number
+  reserved: number
+  mask: V3MaskFlags
   attributes: V3Attribute[]
 }
 
-export function encodeV3Message(msg: V3Message): Buffer {
-  const body = encodeAttributes(msg.attributes)
-  // Header: 2-byte msg type + 2-byte body length
-  const header = Buffer.alloc(4)
-  header.writeUInt16BE(msg.msgType, 0)
-  header.writeUInt16BE(body.length, 2)
-  return Buffer.concat([header, body])
+// --- CRC-8 (polynomial 0x07, init 0x00) ---
+
+const crc8Table = buildCrc8Table(0x07)
+
+function buildCrc8Table(poly: number): Uint8Array {
+  const table = new Uint8Array(256)
+  for (let i = 0; i < 256; i++) {
+    let crc = i
+    for (let bit = 0; bit < 8; bit++) {
+      crc = (crc & 0x80) ? ((crc << 1) ^ poly) & 0xff : (crc << 1) & 0xff
+    }
+    table[i] = crc
+  }
+  return table
 }
 
-export function decodeV3Message(buf: Buffer): V3Message {
-  const msgType = buf.readUInt16BE(0)
-  const bodyLen = buf.readUInt16BE(2)
-  const attributes = decodeAttributes(buf.subarray(4, 4 + bodyLen))
-  return { msgType, attributes }
+export function crc8(data: Uint8Array): number {
+  let crc = 0x00
+  for (let i = 0; i < data.length; i++) {
+    crc = crc8Table[(crc ^ data[i]) & 0xff]
+  }
+  return crc
 }
 
-function encodeAttributes(attrs: V3Attribute[]): Buffer {
+// --- Mask byte encode/decode ---
+
+function encodeMask(flags: V3MaskFlags): number {
+  return (
+    ((flags.encrypt ? 1 : 0) << 7) |
+    ((flags.saltVersion & 1) << 6) |
+    ((flags.saltIndex & 7) << 3) |
+    ((flags.expandHeader ? 1 : 0) << 2) |
+    ((flags.is2BLen ? 1 : 0) << 1)
+  )
+}
+
+function decodeMask(byte: number): V3MaskFlags {
+  return {
+    encrypt: (byte & 0x80) !== 0,
+    saltVersion: (byte >> 6) & 1,
+    saltIndex: (byte >> 3) & 7,
+    expandHeader: (byte & 0x04) !== 0,
+    is2BLen: (byte & 0x02) !== 0,
+  }
+}
+
+// --- TLV Attribute encode/decode ---
+
+function encodeAttributes(attrs: V3Attribute[], is2BLen: boolean): Buffer {
   const parts: Buffer[] = []
   for (const attr of attrs) {
-    const tlv = Buffer.alloc(3 + attr.value.length)
-    tlv[0] = attr.tag
-    tlv.writeUInt16BE(attr.value.length, 1)
-    attr.value.copy(tlv, 3)
-    parts.push(tlv)
+    if (attr.tag === 0x07 && is2BLen) {
+      // Special: 2-byte length for tag 0x07
+      const tlv = Buffer.alloc(3 + attr.value.length)
+      tlv[0] = attr.tag
+      tlv.writeUInt16BE(attr.value.length, 1)
+      attr.value.copy(tlv, 3)
+      parts.push(tlv)
+    } else {
+      const tlv = Buffer.alloc(2 + attr.value.length)
+      tlv[0] = attr.tag
+      tlv[1] = attr.value.length
+      attr.value.copy(tlv, 2)
+      parts.push(tlv)
+    }
   }
   return Buffer.concat(parts)
 }
 
-function decodeAttributes(buf: Buffer): V3Attribute[] {
+function decodeAttributes(buf: Buffer, is2BLen: boolean): V3Attribute[] {
   const attrs: V3Attribute[] = []
   let offset = 0
   while (offset < buf.length) {
     const tag = buf[offset]
-    const len = buf.readUInt16BE(offset + 1)
-    const value = Buffer.from(buf.subarray(offset + 3, offset + 3 + len))
-    attrs.push({ tag, value })
-    offset += 3 + len
+    if (tag === AttrTag.END_MARKER) {
+      // End marker: tag 0xFF with length 0
+      attrs.push({ tag, value: Buffer.alloc(0) })
+      offset += 2
+      break
+    }
+    if (tag === 0x07 && is2BLen) {
+      if (offset + 3 > buf.length) break
+      const len = buf.readUInt16BE(offset + 1)
+      const value = Buffer.from(buf.subarray(offset + 3, offset + 3 + len))
+      attrs.push({ tag, value })
+      offset += 3 + len
+    } else {
+      if (offset + 2 > buf.length) break
+      const len = buf[offset + 1]
+      const value = Buffer.from(buf.subarray(offset + 2, offset + 2 + len))
+      attrs.push({ tag, value })
+      offset += 2 + len
+    }
   }
   return attrs
 }
+
+// --- Message encode/decode ---
+
+export function encodeV3Message(msg: V3Message): Buffer {
+  const is2BLen = msg.mask.is2BLen
+  const body = encodeAttributes(msg.attributes, is2BLen)
+
+  const header = Buffer.alloc(V3_HEADER_LEN)
+  header[0] = V3_MAGIC
+  header[1] = encodeMask(msg.mask)
+  header.writeUInt16BE(msg.msgType, 2)
+  header.writeUInt32BE(msg.seqNum, 4)
+  header.writeUInt16BE(msg.reserved, 8)
+  header[10] = V3_HEADER_LEN
+  header[11] = 0x00 // placeholder for CRC
+
+  const full = Buffer.concat([header, body])
+  full[11] = crc8(full)
+  return full
+}
+
+export function decodeV3Message(buf: Buffer): V3Message {
+  if (buf.length < V3_HEADER_LEN) {
+    throw new Error(`V3 message too short: ${buf.length} bytes`)
+  }
+
+  const magic = buf[0]
+  if ((magic >> 4) !== 0xe) {
+    throw new Error(`Invalid V3 magic: 0x${magic.toString(16)}`)
+  }
+
+  const maskByte = buf[1]
+  const mask = decodeMask(maskByte)
+  const msgType = buf.readUInt16BE(2)
+  const seqNum = buf.readUInt32BE(4)
+  const reserved = buf.readUInt16BE(8)
+  const headerLen = buf[10]
+
+  // CRC check
+  const storedCrc = buf[11]
+  const checkBuf = Buffer.from(buf)
+  checkBuf[11] = 0x00
+  const computedCrc = crc8(checkBuf)
+  if (storedCrc !== computedCrc) {
+    throw new Error(`CRC-8 mismatch: stored=0x${storedCrc.toString(16)} computed=0x${computedCrc.toString(16)}`)
+  }
+
+  const bodyBuf = buf.subarray(headerLen)
+  const attributes = decodeAttributes(bodyBuf, mask.is2BLen)
+
+  return { msgType, seqNum, reserved, mask, attributes }
+}
+
+// --- Helpers ---
 
 export function getStringAttr(attrs: V3Attribute[], tag: number): string | undefined {
   const attr = attrs.find(a => a.tag === tag)
@@ -56,5 +253,18 @@ export function getIntAttr(attrs: V3Attribute[], tag: number): number | undefine
   if (!attr) return undefined
   if (attr.value.length === 4) return attr.value.readUInt32BE(0)
   if (attr.value.length === 2) return attr.value.readUInt16BE(0)
-  return attr.value[0]
+  if (attr.value.length === 1) return attr.value[0]
+  return undefined
+}
+
+/** Create a default mask with all flags off and is2BLen=true (common case) */
+export function defaultMask(overrides: Partial<V3MaskFlags> = {}): V3MaskFlags {
+  return {
+    encrypt: false,
+    saltVersion: 0,
+    saltIndex: 0,
+    expandHeader: false,
+    is2BLen: true,
+    ...overrides,
+  }
 }
