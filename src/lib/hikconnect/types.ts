@@ -124,6 +124,55 @@ export type RecordListResponse = ApiResponse<{
   files: RecordFile[]
 }>
 
+/** P2P server entry from pagelist */
+export type P2PServer = {
+  ip: string
+  port: number
+}
+
+/** Parsed P2P configuration for a device */
+export type P2PConfig = {
+  servers: P2PServer[]
+  secretKey: string
+  keyVersion: number
+  connection: {
+    localIp: string
+    netIp: string
+    localCmdPort: number
+    netCmdPort: number
+    localStreamPort: number
+    netStreamPort: number
+    wanIp: string
+  }
+}
+
+/** Raw KMS entry from pagelist */
+export type KmsEntry = {
+  secretKey: string
+  version: string
+}
+
+/** Raw CONNECTION entry from pagelist */
+export type ConnectionEntry = {
+  localIp: string
+  netIp: string
+  localCmdPort: number
+  netCmdPort: number
+  localStreamPort: number
+  netStreamPort: number
+  netType: number
+  wanIp: string
+  upnp: boolean
+}
+
+/** GET /v3/userdevices/v1/resources/pagelist with P2P,KMS,CONNECTION filter */
+export type P2PDeviceListResponse = ApiResponse<{
+  deviceInfos: Device[]
+  P2P: Record<string, P2PServer[]>
+  KMS: Record<string, KmsEntry>
+  CONNECTION: Record<string, ConnectionEntry>
+}>
+
 /** Credentials for login */
 export type Credentials = {
   account: string
