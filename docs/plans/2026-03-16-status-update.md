@@ -105,7 +105,7 @@ Attempted to load `libezstreamclient.so` outside Android.
 | redroid + Frida frame extraction | Partially | Infra works but headless UI navigation blocked |
 | redroid + custom bridge app (no Frida) | Not tried | Write Android service that calls NativeApi directly, pipes frames to stdout |
 | ISUP/EHome SDK (official) | Not applicable | Requires NVR reconfiguration away from Hik-Connect. User constraint: must work with vanilla Hik-Connect. |
-| Full UDP P2P protocol RE | Not tried | Build CAS + STUN + P2P client from scratch using captured data |
+| Full UDP P2P protocol RE | **In progress** | Ghidra static RE complete. ChaCha20 encryption (not AES), ECDH P-256 key exchange, 11-byte header + HMAC-SHA256 packet format all reversed. CAS broker + P2P net architecture documented. See `docs/re/` |
 
 ## Recommended Next Steps (in order of effort/risk)
 
@@ -118,8 +118,17 @@ SSH tunnel to redroid, use scrcpy to visually complete onboarding + login once. 
 ### 3. Android bridge app on redroid (medium effort)
 Write a minimal Android app/service that calls `NativeApi.initSDK()` / `createPreviewHandle()` / `startPreview()` directly. Receives frames via callback, writes to stdout. No Frida needed. Runs headless.
 
-### 4. Full UDP P2P protocol RE (high effort)
-Use the Frida captures + packet dumps to reverse engineer the CAS broker protocol, STUN handshake, and UDP P2P framing. Build a Node.js implementation from scratch. Most independent but 4-6 weeks of work.
+### 4. Full UDP P2P protocol RE (ACTIVE — Phase A complete)
+Static RE via Ghidra + kawaiidra-mcp completed 2026-03-17. Major findings:
+- **Encryption:** ChaCha20 (not AES) with HMAC-SHA256. All natively supported in Node.js.
+- **Key exchange:** ECDH P-256 via mbedTLS. Natively supported in Node.js.
+- **Packet format:** 11-byte header (`$\x02` magic + length + seqnum) + encrypted payload + 32-byte HMAC
+- **CAS broker:** CTransferClientMgr, v2.16.2.20250108, uses protobuf (PdsInfo)
+- **P2P net:** CP2PManager, v1.1.0.211018, STUN hole-punching
+- **SRT:** Secure Reliable Transport also initialized (possible fallback)
+- **Full docs:** `docs/re/jni-exports.md`, `docs/re/cas-broker-protocol.md`, `docs/re/stun-p2p-protocol.md`, `docs/re/crypto-analysis.md`
+
+**Next:** Phase B (dynamic validation with Frida on Hetzner ARM VM) to capture actual CAS TCP messages and verify packet format.
 
 ---
 
