@@ -39,3 +39,5 @@ coverage/
 
 # Claude Code worktrees
 .claude/worktrees/
+native/libs/*.so
+native/ghidra/
