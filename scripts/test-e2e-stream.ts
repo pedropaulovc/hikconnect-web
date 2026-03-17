@@ -11,7 +11,7 @@ for (const line of readFileSync('.env.local', 'utf8').split('\n')) {
 }
 
 import { HikConnectClient } from '../src/lib/hikconnect/client'
-import { stunBind } from '../src/lib/p2p/stun-client'
+import { hikStunBind, rfc5389StunBind } from '../src/lib/p2p/stun-client'
 import { CasClient, buildPlayRequest } from '../src/lib/p2p/cas-client'
 
 const account = process.env.HIKCONNECT_ACCOUNT
@@ -60,13 +60,13 @@ async function main() {
   console.log('\n=== Step 4: STUN Binding ===')
   try {
     // Try the Hik STUN server first
-    const stunResult = await stunBind('43.130.155.63', 6002)
-    console.log('STUN mapped address:', stunResult.address, ':', stunResult.port)
+    const stunResult = await hikStunBind('43.130.155.63', 6002, device.deviceSerial)
+    console.log('Hik STUN mapped address:', stunResult.address, ':', stunResult.port, 'NAT:', stunResult.natType)
   } catch (e) {
     console.log('Hik STUN failed:', (e as Error).message)
     // Try a public STUN server as fallback
     try {
-      const stunResult = await stunBind('stun.l.google.com', 19302)
+      const stunResult = await rfc5389StunBind('stun.l.google.com', 19302)
       console.log('Google STUN mapped address:', stunResult.address, ':', stunResult.port)
     } catch (e2) {
       console.log('Google STUN also failed:', (e2 as Error).message)

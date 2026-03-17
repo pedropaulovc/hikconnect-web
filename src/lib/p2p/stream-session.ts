@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { stunBind, type StunResult } from './stun-client'
+import { rfc5389StunBind, type StunResult } from './stun-client'
 import { generateKeyPair, type KeyPair } from './crypto'
 import { CasClient, type CasClientConfig, type PlayRequestParams } from './cas-client'
 import { FfmpegHlsPipe, type HlsConfig } from '../hls/ffmpeg-pipe'
@@ -31,7 +31,7 @@ export type StreamSessionDeps = {
 }
 
 const defaultDeps: StreamSessionDeps = {
-  stunBind,
+  stunBind: rfc5389StunBind,
   generateKeyPair,
   createCasClient: (config) => new CasClient(config),
   createHlsPipe: (config) => new FfmpegHlsPipe(config),
