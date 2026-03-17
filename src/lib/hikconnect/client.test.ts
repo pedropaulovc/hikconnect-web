@@ -121,7 +121,8 @@ describe('HikConnectClient', () => {
       expect(config.connection.wanIp).toBe('24.35.64.195')
 
       // Verify the filter query parameter
-      const calledUrl = mockFetch.mock.calls[0][0] as string
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const calledUrl = (mockFetch.mock.calls as any)[0][0] as string
       expect(calledUrl).toContain('filter=P2P,KMS,CONNECTION')
     })
 
