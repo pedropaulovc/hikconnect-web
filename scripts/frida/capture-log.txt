@@ -1,0 +1,133 @@
+     ____
+    / _  |   Frida 17.8.2 - A world-class dynamic instrumentation toolkit
+   | (_| |
+    > _  |   Commands:
+   /_/ |_|       help      -> Displays the help system
+   . . . .       object?   -> Display information about 'object'
+   . . . .       exit/quit -> Exit
+   . . . .
+   . . . .   More info at https://frida.re/docs/home/
+   . . . .
+   . . . .   Connected to Android Emulator 5554 (id=emulator-5554)
+Attaching...
+[*] Java hooks starting...
+[*] Hooked NativeApi.createPreviewHandle
+[*] Hooked NativeApi.startPreview
+[*] Hooked NativeApi.createClient
+[*] Hooked NativeApi.setTokens
+[*] Hooked NativeApi.setSecretKey
+[*] Hooked NativeApi.generateECDHKey
+[*] Hooked NativeApi.getClientType
+[*] All Java hooks installed. Login and open a camera live view.
+[Android Emulator 5554::PID::7423 ]-> 
+=== NativeApi.createPreviewHandle ===
+InitParam: InitParam{iStreamSource=0, iStreamInhibit=10, szDevIP='24.35.64.195', szDevLocalIP='192.168.0.101', iDevCmdPort=9010, iDevCmdLocalPort=9010, iDevStreamPort=9020, iDevStreamLocalPort=9020, iStreamType=1, iVideoLevel=1, iChannelNumber=1, szSuperDeviceSerial=null, szDevSerial='L38239367', szChnlSerial='L38239367', iVoiceChannelNumber=0, szHardwareCode='74265e48c93893a15a29040e1aefcfc0', szTtsIP='null', szTtsBackupIP='null', iTtsPort=0, szClientSession='eyJhbGciOiJIUzM4NCJ9.eyJhdWQiOiJmY2ZhZWM5MGE1NWY0YTYxYjRlNzIxMTE1MmEyZDgwNSIsImlzcyI6ImV6dml6X2FwcCIsImV4cCI6MTc3MzgwNDU4MiwiaWF0IjoxNzczNzE4MTgyLCJzdWIiOiJzIiwiY3QiOiI1NSIsInRkIjoxNzczNzE4MjQyNjEyLCJzIjoiNzQyNjVlNDhjOTM4OTNhMTVhMjkwNDBlMWFlZmNmYzAiLCJjbiI6InNka19ncGhvbmU2NF94ODZfNjQifQ.2u0hLx-cCOIeZixUope3o7AH-LaUKbkNoSH0CF7xRbKUSgq3Gu-NCnIkz0esuu_m', szPermanetkey='null', szCasServerIP='34.194.209.167', iCasServerPort=6500, szStunIP='43.130.155.63', iStunPort=6002, iClnType=55, iVtmPort=8554, szVtmIP='148.153.53.29', iStreamTimeOut=30000, szCloudServerIP='null', szCloudServerBackupIP='null', iCloudServerPort=0, szTicketToken='null', szExtensionParas='biz=1', iIPV6=0, iNeedProxy=0, iSupportNAT34=0, iChannelCount=8, support_new_talk=false, iInternetType=1, iCheckInterval=180, iP2PVersion=3, szUserID='fcfaec90a55f4a61b4e7211152a2d805', iPlaybackSpeed=0, iNetSDKUserId=-1, iNetSDKChannelNumber=0, p2pServerList=[com.ez.stream.EZP2PServerInfo@b6bb550, com.ez.stream.EZP2PServerInfo@9fac349], iStorageVersion=1, iCloudVideoType=-1, iSDCardVideoType=0, iFrameInterval=0, szLid='670509b0-23c4-4491-8d3d-e2edf904963e', usP2PKeyVer=101, szP2PLinkKey=[54, 52, 52, 55, 102, 53, 54, 98, 57, 101, 52, 50, 50, 57, 102, 98, 57, 52, 98, 54, 102, 50, 54, 55, 55, 54, 48, 51, 101, 57, 99, 48], iShared=0, iSmallStream=0, isSmallMtu=0, iDevSupportAsyn=0, iSupportPlayBackEndFlag=0, iLinkEncryptV2=0, szStartTime='null', szStopTime='null', szFileID='null', vtduServerPublicKey=[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], vtduServerKeyVersion=0, iQosTalkVersion=0, szQosTaklIP='null', iQosTakPort=0, szExtInfo='null'}
+  devSerial: L38239367
+  devIP: 24.35.64.195
+  devLocalIP: 192.168.0.101
+
+=== NativeApi.createPreviewHandle ===
+  vtmIP: 148.153.53.29
+  vtmPort: 8554
+  vtmBackIP: 148.153.53.29
+  ttsIP: null
+  ttsPort: 0
+  stunIP: 43.130.155.63
+  stunPort: 6002
+  streamType: 1
+  streamSource: 0
+  channelNo: 1
+  clientSession: eyJhbGciOiJIUzM4NCJ9.eyJhdWQiOiJmY2ZhZWM5MGE1NWY0YTYxYjRlNzIxMTE1MmEyZDgwNSIsImlzcyI6ImV6dml6X2FwcCIsImV4cCI6MTc3MzgwNDU4MiwiaWF0IjoxNzczNzE4MTgyLCJzdWIiOiJzIiwiY3QiOiI1NSIsInRkIjoxNzczNzE4MjQyNjEyLCJzIjoiNzQyNjVlNDhjOTM4OTNhMTVhMjkwNDBlMWFlZmNmYzAiLCJjbiI6InNka19ncGhvbmU2NF94ODZfNjQifQ.2u0hLx-cCOIeZixUope3o7AH-LaUKbkNoSH0CF7xRbKUSgq3Gu-NCnIkz0esuu_m
+  permanentKey: null
+  ticketToken: null
+  streamToken: null
+  p2pVersion: 3
+  streamInhibit: 10
+  linkEncryptV2: 0
+  vtduKeyVersion: 0
+  vtduPublicKey: 
+InitParam: InitParam{iStreamSource=0, iStreamInhibit=10, szDevIP='24.35.64.195', szDevLocalIP='192.168.0.101', iDevCmdPort=9010, iDevCmdLocalPort=9010, iDevStreamPort=9020, iDevStreamLocalPort=9020, iStreamType=1, iVideoLevel=1, iChannelNumber=4, szSuperDeviceSerial=null, szDevSerial='L38239367', szChnlSerial='L38239367', iVoiceChannelNumber=0, szHardwareCode='74265e48c93893a15a29040e1aefcfc0', szTtsIP='null', szTtsBackupIP='null', iTtsPort=0, szClientSession='eyJhbGciOiJIUzM4NCJ9.eyJhdWQiOiJmY2ZhZWM5MGE1NWY0YTYxYjRlNzIxMTE1MmEyZDgwNSIsImlzcyI6ImV6dml6X2FwcCIsImV4cCI6MTc3MzgwNDU4MiwiaWF0IjoxNzczNzE4MTgyLCJzdWIiOiJzIiwiY3QiOiI1NSIsInRkIjoxNzczNzE4MjQyNjEyLCJzIjoiNzQyNjVlNDhjOTM4OTNhMTVhMjkwNDBlMWFlZmNmYzAiLCJjbiI6InNka19ncGhvbmU2NF94ODZfNjQifQ.2u0hLx-cCOIeZixUope3o7AH-LaUKbkNoSH0CF7xRbKUSgq3Gu-NCnIkz0esuu_m', szPermanetkey='null', szCasServerIP='34.194.209.167', iCasServerPort=6500, szStunIP='43.130.155.63', iStunPort=6002, iClnType=55, iVtmPort=8554, szVtmIP='148.153.53.29', iStreamTimeOut=30000, szCloudServerIP='null', szCloudServerBackupIP='null', iCloudServerPort=0, szTicketToken='null', szExtensionParas='biz=1', iIPV6=0, iNeedProxy=0, iSupportNAT34=0, iChannelCount=8, support_new_talk=false, iInternetType=1, iCheckInterval=180, iP2PVersion=3, szUserID='fcfaec90a55f4a61b4e7211152a2d805', iPlaybackSpeed=0, iNetSDKUserId=-1, iNetSDKChannelNumber=0, p2pServerList=[com.ez.stream.EZP2PServerInfo@b62196f, com.ez.stream.EZP2PServerInfo@75ed67c], iStorageVersion=1, iCloudVideoType=-1, iSDCardVideoType=0, iFrameInterval=0, szLid='670509b0-23c4-4491-8d3d-e2edf904963e', usP2PKeyVer=101, szP2PLinkKey=[54, 52, 52, 55, 102, 53, 54, 98, 57, 101, 52, 50, 50, 57, 102, 98, 57, 52, 98, 54, 102, 50, 54, 55, 55, 54, 48, 51, 101, 57, 99, 48], iShared=0, iSmallStream=0, isSmallMtu=0, iDevSupportAsyn=0, iSupportPlayBackEndFlag=0, iLinkEncryptV2=0, szStartTime='null', szStopTime='null', szFileID='null', vtduServerPublicKey=[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], vtduServerKeyVersion=0, iQosTalkVersion=0, szQosTaklIP='null', iQosTakPort=0, szExtInfo='null'}
+  devSerial: L38239367
+  devIP: 24.35.64.195
+  devLocalIP: 192.168.0.101
+  vtmIP: 148.153.53.29
+  vtmPort: 8554
+  vtmBackIP: 148.153.53.29
+  ttsIP: null
+  ttsPort: 0
+  stunIP: 43.130.155.63
+  stunPort: 6002
+  streamType: 1
+  streamSource: 0
+  channelNo: 4
+  clientSession: eyJhbGciOiJIUzM4NCJ9.eyJhdWQiOiJmY2ZhZWM5MGE1NWY0YTYxYjRlNzIxMTE1MmEyZDgwNSIsImlzcyI6ImV6dml6X2FwcCIsImV4cCI6MTc3MzgwNDU4MiwiaWF0IjoxNzczNzE4MTgyLCJzdWIiOiJzIiwiY3QiOiI1NSIsInRkIjoxNzczNzE4MjQyNjEyLCJzIjoiNzQyNjVlNDhjOTM4OTNhMTVhMjkwNDBlMWFlZmNmYzAiLCJjbiI6InNka19ncGhvbmU2NF94ODZfNjQifQ.2u0hLx-cCOIeZixUope3o7AH-LaUKbkNoSH0CF7xRbKUSgq3Gu-NCnIkz0esuu_m
+  permanentKey: null
+  ticketToken: null
+  streamToken: null
+  p2pVersion: 3
+  streamInhibit: 10
+  linkEncryptV2: 0
+  vtduKeyVersion: 0
+  vtduPublicKey: 
+
+=== NativeApi.createPreviewHandle ===
+  => handle: 133370906924624
+  => handle: 133370906925648
+InitParam: InitParam{iStreamSource=0, iStreamInhibit=10, szDevIP='24.35.64.195', szDevLocalIP='192.168.0.101', iDevCmdPort=9010, iDevCmdLocalPort=9010, iDevStreamPort=9020, iDevStreamLocalPort=9020, iStreamType=1, iVideoLevel=1, iChannelNumber=3, szSuperDeviceSerial=null, szDevSerial='L38239367', szChnlSerial='L38239367', iVoiceChannelNumber=0, szHardwareCode='74265e48c93893a15a29040e1aefcfc0', szTtsIP='null', szTtsBackupIP='null', iTtsPort=0, szClientSession='eyJhbGciOiJIUzM4NCJ9.eyJhdWQiOiJmY2ZhZWM5MGE1NWY0YTYxYjRlNzIxMTE1MmEyZDgwNSIsImlzcyI6ImV6dml6X2FwcCIsImV4cCI6MTc3MzgwNDU4MiwiaWF0IjoxNzczNzE4MTgyLCJzdWIiOiJzIiwiY3QiOiI1NSIsInRkIjoxNzczNzE4MjQyNjEyLCJzIjoiNzQyNjVlNDhjOTM4OTNhMTVhMjkwNDBlMWFlZmNmYzAiLCJjbiI6InNka19ncGhvbmU2NF94ODZfNjQifQ.2u0hLx-cCOIeZixUope3o7AH-LaUKbkNoSH0CF7xRbKUSgq3Gu-NCnIkz0esuu_m', szPermanetkey='null', szCasServerIP='34.194.209.167', iCasServerPort=6500, szStunIP='43.130.155.63', iStunPort=6002, iClnType=55, iVtmPort=8554, szVtmIP='148.153.53.29', iStreamTimeOut=30000, szCloudServerIP='null', szCloudServerBackupIP='null', iCloudServerPort=0, szTicketToken='null', szExtensionParas='biz=1', iIPV6=0, iNeedProxy=0, iSupportNAT34=0, iChannelCount=8, support_new_talk=false, iInternetType=1, iCheckInterval=180, iP2PVersion=3, szUserID='fcfaec90a55f4a61b4e7211152a2d805', iPlaybackSpeed=0, iNetSDKUserId=-1, iNetSDKChannelNumber=0, p2pServerList=[com.ez.stream.EZP2PServerInfo@d20dd8b, com.ez.stream.EZP2PServerInfo@f00de68], iStorageVersion=1, iCloudVideoType=-1, iSDCardVideoType=0, iFrameInterval=0, szLid='670509b0-23c4-4491-8d3d-e2edf904963e', usP2PKeyVer=101, szP2PLinkKey=[54, 52, 52, 55, 102, 53, 54, 98, 57, 101, 52, 50, 50, 57, 102, 98, 57, 52, 98, 54, 102, 50, 54, 55, 55, 54, 48, 51, 101, 57, 99, 48], iShared=0, iSmallStream=0, isSmallMtu=0, iDevSupportAsyn=0, iSupportPlayBackEndFlag=0, iLinkEncryptV2=0, szStartTime='null', szStopTime='null', szFileID='null', vtduServerPublicKey=[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], vtduServerKeyVersion=0, iQosTalkVersion=0, szQosTaklIP='null', iQosTakPort=0, szExtInfo='null'}
+  devSerial: L38239367
+  devIP: 24.35.64.195
+  devLocalIP: 192.168.0.101
+  vtmIP: 148.153.53.29
+  vtmPort: 8554
+  vtmBackIP: 148.153.53.29
+  ttsIP: null
+  ttsPort: 0
+  stunIP: 43.130.155.63
+  stunPort: 6002
+  streamType: 1
+  streamSource: 0
+  channelNo: 3
+  clientSession: eyJhbGciOiJIUzM4NCJ9.eyJhdWQiOiJmY2ZhZWM5MGE1NWY0YTYxYjRlNzIxMTE1MmEyZDgwNSIsImlzcyI6ImV6dml6X2FwcCIsImV4cCI6MTc3MzgwNDU4MiwiaWF0IjoxNzczNzE4MTgyLCJzdWIiOiJzIiwiY3QiOiI1NSIsInRkIjoxNzczNzE4MjQyNjEyLCJzIjoiNzQyNjVlNDhjOTM4OTNhMTVhMjkwNDBlMWFlZmNmYzAiLCJjbiI6InNka19ncGhvbmU2NF94ODZfNjQifQ.2u0hLx-cCOIeZixUope3o7AH-LaUKbkNoSH0CF7xRbKUSgq3Gu-NCnIkz0esuu_m
+  permanentKey: null
+  ticketToken: null
+  streamToken: null
+  p2pVersion: 3
+  streamInhibit: 10
+  linkEncryptV2: 0
+  vtduKeyVersion: 0
+  vtduPublicKey: 
+  => handle: 133370906928112
+
+=== NativeApi.setSecretKey(handle=133370906928112, key=ABCDEF) ===
+
+=== NativeApi.setSecretKey(handle=133370906924624, key=ABCDEF) ===
+
+=== NativeApi.setSecretKey(handle=133370906925648, key=ABCDEF) ===
+
+=== NativeApi.createPreviewHandle ===
+InitParam: InitParam{iStreamSource=0, iStreamInhibit=10, szDevIP='24.35.64.195', szDevLocalIP='192.168.0.101', iDevCmdPort=9010, iDevCmdLocalPort=9010, iDevStreamPort=9020, iDevStreamLocalPort=9020, iStreamType=1, iVideoLevel=1, iChannelNumber=2, szSuperDeviceSerial=null, szDevSerial='L38239367', szChnlSerial='L38239367', iVoiceChannelNumber=0, szHardwareCode='74265e48c93893a15a29040e1aefcfc0', szTtsIP='null', szTtsBackupIP='null', iTtsPort=0, szClientSession='eyJhbGciOiJIUzM4NCJ9.eyJhdWQiOiJmY2ZhZWM5MGE1NWY0YTYxYjRlNzIxMTE1MmEyZDgwNSIsImlzcyI6ImV6dml6X2FwcCIsImV4cCI6MTc3MzgwNDU4MiwiaWF0IjoxNzczNzE4MTgyLCJzdWIiOiJzIiwiY3QiOiI1NSIsInRkIjoxNzczNzE4MjQyNjEyLCJzIjoiNzQyNjVlNDhjOTM4OTNhMTVhMjkwNDBlMWFlZmNmYzAiLCJjbiI6InNka19ncGhvbmU2NF94ODZfNjQifQ.2u0hLx-cCOIeZixUope3o7AH-LaUKbkNoSH0CF7xRbKUSgq3Gu-NCnIkz0esuu_m', szPermanetkey='null', szCasServerIP='34.194.209.167', iCasServerPort=6500, szStunIP='43.130.155.63', iStunPort=6002, iClnType=55, iVtmPort=8554, szVtmIP='148.153.53.29', iStreamTimeOut=30000, szCloudServerIP='null', szCloudServerBackupIP='null', iCloudServerPort=0, szTicketToken='null', szExtensionParas='biz=1', iIPV6=0, iNeedProxy=0, iSupportNAT34=0, iChannelCount=8, support_new_talk=false, iInternetType=1, iCheckInterval=180, iP2PVersion=3, szUserID='fcfaec90a55f4a61b4e7211152a2d805', iPlaybackSpeed=0, iNetSDKUserId=-1, iNetSDKChannelNumber=0, p2pServerList=[com.ez.stream.EZP2PServerInfo@c87e85, com.ez.stream.EZP2PServerInfo@bc894da], iStorageVersion=1, iCloudVideoType=-1, iSDCardVideoType=0, iFrameInterval=0, szLid='670509b0-23c4-4491-8d3d-e2edf904963e', usP2PKeyVer=101, szP2PLinkKey=[54, 52, 52, 55, 102, 53, 54, 98, 57, 101, 52, 50, 50, 57, 102, 98, 57, 52, 98, 54, 102, 50, 54, 55, 55, 54, 48, 51, 101, 57, 99, 48], iShared=0, iSmallStream=0, isSmallMtu=0, iDevSupportAsyn=0, iSupportPlayBackEndFlag=0, iLinkEncryptV2=0, szStartTime='null', szStopTime='null', szFileID='null', vtduServerPublicKey=[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], vtduServerKeyVersion=0, iQosTalkVersion=0, szQosTaklIP='null', iQosTakPort=0, szExtInfo='null'}
+  devSerial: L38239367
+  devIP: 24.35.64.195
+  devLocalIP: 192.168.0.101
+  vtmIP: 148.153.53.29
+  vtmPort: 8554
+  vtmBackIP: 148.153.53.29
+  ttsIP: null
+  ttsPort: 0
+  stunIP: 43.130.155.63
+  stunPort: 6002
+  streamType: 1
+  streamSource: 0
+  channelNo: 2
+  clientSession: eyJhbGciOiJIUzM4NCJ9.eyJhdWQiOiJmY2ZhZWM5MGE1NWY0YTYxYjRlNzIxMTE1MmEyZDgwNSIsImlzcyI6ImV6dml6X2FwcCIsImV4cCI6MTc3MzgwNDU4MiwiaWF0IjoxNzczNzE4MTgyLCJzdWIiOiJzIiwiY3QiOiI1NSIsInRkIjoxNzczNzE4MjQyNjEyLCJzIjoiNzQyNjVlNDhjOTM4OTNhMTVhMjkwNDBlMWFlZmNmYzAiLCJjbiI6InNka19ncGhvbmU2NF94ODZfNjQifQ.2u0hLx-cCOIeZixUope3o7AH-LaUKbkNoSH0CF7xRbKUSgq3Gu-NCnIkz0esuu_m
+  permanentKey: null
+  ticketToken: null
+  streamToken: null
+  p2pVersion: 3
+  streamInhibit: 10
+  linkEncryptV2: 0
+  vtduKeyVersion: 0
+  vtduPublicKey: 
+  => handle: 133370906951440
+
+=== NativeApi.setSecretKey(handle=133370906951440, key=ABCDEF) ===
