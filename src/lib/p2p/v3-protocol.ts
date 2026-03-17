@@ -1,6 +1,8 @@
 // V3 Protocol - Wire format reverse-engineered from libezstreamclient.so via Ghidra
 // See docs/re/v3-protocol-opcodes.md for full specification
 
+import { createCipheriv, createDecipheriv } from 'node:crypto'
+
 // --- Constants ---
 
 export const V3_MAGIC = 0xe2
@@ -92,9 +94,9 @@ export type V3Message = {
   attributes: V3Attribute[]
 }
 
-// --- CRC-8 (polynomial 0x07, init 0x00) ---
+// --- CRC-8 (polynomial 0x39, init 0x00) ---
 
-const crc8Table = buildCrc8Table(0x07)
+const crc8Table = buildCrc8Table(0x39)
 
 function buildCrc8Table(poly: number): Uint8Array {
   const table = new Uint8Array(256)
@@ -191,9 +193,33 @@ function decodeAttributes(buf: Buffer, is2BLen: boolean): V3Attribute[] {
 
 // --- Message encode/decode ---
 
-export function encodeV3Message(msg: V3Message): Buffer {
+/**
+ * Encrypt body with AES-128-CBC PKCS5 padding.
+ * Key: first 16 bytes of the provided key buffer.
+ * IV: 16 zero bytes (standard for Hik V3 protocol).
+ */
+function aes128CbcEncrypt(body: Buffer, key: Buffer): Buffer {
+  const aesKey = key.subarray(0, 16)
+  const iv = Buffer.alloc(16)
+  const cipher = createCipheriv('aes-128-cbc', aesKey, iv)
+  return Buffer.concat([cipher.update(body), cipher.final()])
+}
+
+function aes128CbcDecrypt(body: Buffer, key: Buffer): Buffer {
+  const aesKey = key.subarray(0, 16)
+  const iv = Buffer.alloc(16)
+  const decipher = createDecipheriv('aes-128-cbc', aesKey, iv)
+  return Buffer.concat([decipher.update(body), decipher.final()])
+}
+
+export function encodeV3Message(msg: V3Message, encryptKey?: Buffer): Buffer {
   const is2BLen = msg.mask.is2BLen
-  const body = encodeAttributes(msg.attributes, is2BLen)
+  let body = encodeAttributes(msg.attributes, is2BLen)
+
+  const shouldEncrypt = msg.mask.encrypt && encryptKey
+  if (shouldEncrypt) {
+    body = aes128CbcEncrypt(body, encryptKey)
+  }
 
   const header = Buffer.alloc(V3_HEADER_LEN)
   header[0] = V3_MAGIC
@@ -209,7 +235,7 @@ export function encodeV3Message(msg: V3Message): Buffer {
   return full
 }
 
-export function decodeV3Message(buf: Buffer): V3Message {
+export function decodeV3Message(buf: Buffer, decryptKey?: Buffer): V3Message {
   if (buf.length < V3_HEADER_LEN) {
     throw new Error(`V3 message too short: ${buf.length} bytes`)
   }
@@ -235,7 +261,10 @@ export function decodeV3Message(buf: Buffer): V3Message {
     throw new Error(`CRC-8 mismatch: stored=0x${storedCrc.toString(16)} computed=0x${computedCrc.toString(16)}`)
   }
 
-  const bodyBuf = buf.subarray(headerLen)
+  let bodyBuf = buf.subarray(headerLen)
+  if (mask.encrypt && decryptKey) {
+    bodyBuf = aes128CbcDecrypt(bodyBuf, decryptKey)
+  }
   const attributes = decodeAttributes(bodyBuf, mask.is2BLen)
 
   return { msgType, seqNum, reserved, mask, attributes }

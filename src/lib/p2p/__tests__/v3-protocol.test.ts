@@ -18,10 +18,11 @@ describe('CRC-8', () => {
     expect(crc8(new Uint8Array(0))).toBe(0x00)
   })
 
-  it('computes known CRC-8/SMBUS values', () => {
-    // CRC-8 poly 0x07 over "123456789" => 0xF4
-    const data = new TextEncoder().encode('123456789')
-    expect(crc8(data)).toBe(0xf4)
+  it('matches server CRC-8 (poly 0x39)', () => {
+    // Verified against real P2P server response:
+    // e2020b030000000200000c23020400000003  (CRC at byte 11 = 0x23)
+    const response = Buffer.from('e2020b030000000200000c00020400000003', 'hex') // byte 11 zeroed
+    expect(crc8(response)).toBe(0x23)
   })
 })
 
