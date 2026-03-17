@@ -29,21 +29,21 @@ export type RefreshResponse = ApiResponse<{
 /** Single device from pagelist */
 export type Device = {
   deviceSerial: string
-  deviceName: string
+  name: string
+  fullSerial: string
   deviceType: string
-  deviceVersion: string
+  version: string
   status: number
-  defence: number
-  isEncrypt: number
-  supportP2p: number
-  p2pVersion: number
-  casIp: string
-  casPort: number
-  deviceIp: string
-  deviceLocalIp: string
-  cmdPort: number
-  localCmdPort: number
   channelNumber: number
+  hik: boolean
+  deviceCategory: string
+  customType: string
+  mac: string
+  supportExt: string
+  ezDeviceCapability: string
+  offlineTime: string
+  offlineTimestamp: number
+  riskLevel: number
 }
 
 /** GET /v3/userdevices/v1/resources/pagelist response */
