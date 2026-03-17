@@ -28,7 +28,7 @@ describe.skipIf(skip)('HikConnectClient integration', () => {
     // List cameras
     const cameras = await client.getCameras(device.deviceSerial)
     expect(cameras.length).toBeGreaterThan(0)
-    console.log('Cameras:', cameras.map(c => `ch${c.channelNo}: ${c.channelName}`))
+    console.log('Cameras:', cameras.map(c => `ch${c.channelNo}: ${c.cameraName}`))
 
     const cam = cameras[0]
 

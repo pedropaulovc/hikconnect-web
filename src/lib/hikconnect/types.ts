@@ -53,12 +53,15 @@ export type DeviceListResponse = ApiResponse<{
 
 /** Single camera channel */
 export type Camera = {
-  deviceSerial: string
+  cameraId: string
+  cameraName: string
   channelNo: number
-  channelName: string
-  status: number
-  isShared: string
+  cameraCover: string
+  deviceSerial: string
+  isShow: number
   videoLevel: number
+  videoQualityInfos: { streamType: number; videoLevel: number }[]
+  vtmInfo?: VtmInfo
 }
 
 /** GET /v3/userdevices/v1/cameras/info response */
