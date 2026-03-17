@@ -47,7 +47,7 @@ async function main() {
     { tag: 0x72, value: Buffer.from([3]) },           // protocol version: 3
     { tag: 0x75, value: Buffer.from([0]) },           // additional flag
     { tag: 0x7f, value: Buffer.from([0]) },           // transport flag
-    { tag: 0x74, value: Buffer.from('0.0.0.0:0') },  // local address (placeholder)
+    { tag: 0x74, value: Buffer.from('LOCALADDR') },  // will be replaced after bind
     // { tag: 0x73, value: Buffer.from('') },          // relay/mapped addr (empty)
     { tag: 0x8c, value: Buffer.alloc(4) },            // session ID: 0
 
@@ -60,34 +60,58 @@ async function main() {
     { tag: AttrTag.END_MARKER, value: Buffer.alloc(0) },
   ]
 
-  // Build the key buffer from KMS hex (first 32 bytes = first 16 bytes of AES key)
-  const keyBuf = Buffer.from(kms.secretKey, 'hex')
-  console.log('Key buffer:', keyBuf.length, 'bytes')
+  // Key selection from RE (BuildSendMsg):
+  // When P2PKeyVer != 0 (ours is 101): use userId string as AES key (first 32 bytes)
+  // The userId from Frida capture: fcfaec90a55f4a61b4e7211152a2d805
+  // From current session JWT: extract 'aud' claim which is the userId
+  const jwt = session.sessionId
+  const payload = JSON.parse(Buffer.from(jwt.split('.')[1], 'base64url').toString()) as Record<string, string>
+  const userId = payload.aud
+  console.log('userId from JWT:', userId)
 
-  // Try both encrypted and unencrypted
-  const msgEncrypted = encodeV3Message({
-    msgType: Opcode.P2P_SETUP,
-    seqNum: 1,
-    reserved: 0,
-    mask: defaultMask({ encrypt: true, saltVersion: 1 }),
-    attributes: attrs,
-  }, keyBuf)
+  // The KMS secretKey is the P2P server key (used when P2PKeyVer == 0)
+  // The userId is the encryption key (used when P2PKeyVer != 0 = our case)
+  const userIdKey = Buffer.from(userId)  // ASCII bytes, 32 chars
+  const kmsKey = Buffer.from(kms.secretKey, 'hex')  // Binary, 32 bytes
+  console.log('userId key:', userIdKey.length, 'bytes =', userId.substring(0, 16) + '...')
+  console.log('KMS key:', kmsKey.length, 'bytes')
 
-  const msgPlain = encodeV3Message({
+  // Salt version and index from KMS (version 101)
+  // From RE: salt version = param_1[0x321], salt index = param_1[800]
+  // These map from the P2P key info: saltIndex and saltVer from ST_P2P_KEYINFO
+  const saltVer = 1  // part of version info
+  const saltIdx = 0  // default
+
+  // Try 3 variants: userId key, KMS binary key, KMS hex as ASCII
+  const variants = [
+    { name: 'userId-key', key: userIdKey, saltVersion: saltVer, saltIndex: saltIdx },
+    { name: 'kms-binary', key: kmsKey, saltVersion: saltVer, saltIndex: saltIdx },
+    { name: 'kms-ascii', key: Buffer.from(kms.secretKey.substring(0, 32)), saltVersion: saltVer, saltIndex: saltIdx },
+  ]
+
+  const messages: Array<{ name: string; buf: Buffer }> = []
+  for (const v of variants) {
+    const msg = encodeV3Message({
+      msgType: Opcode.P2P_SETUP,
+      seqNum: messages.length + 1,
+      reserved: 0,
+      mask: defaultMask({ encrypt: true, saltVersion: v.saltVersion, saltIndex: v.saltIndex }),
+      attributes: attrs,
+    }, v.key)
+    messages.push({ name: v.name, buf: msg })
+    console.log(`\n${v.name}: ${msg.length} bytes, mask: 0x${msg[1].toString(16)}, seq: ${messages.length}`)
+  }
+
+  // Also try unencrypted
+  const plainMsg = encodeV3Message({
     msgType: Opcode.P2P_SETUP,
-    seqNum: 2,
+    seqNum: messages.length + 1,
     reserved: 0,
     mask: defaultMask(),
     attributes: attrs,
   })
-
-  const msg = msgPlain // Try plain first to verify connectivity
-  console.log('\nEncrypted P2P_SETUP:', msgEncrypted.length, 'bytes, mask:', '0x' + msgEncrypted[1].toString(16))
-  console.log('Plain P2P_SETUP:', msgPlain.length, 'bytes, mask:', '0x' + msgPlain[1].toString(16))
-
-  console.log('\nP2P_SETUP message:', msg.length, 'bytes')
-  console.log('Header hex:', msg.subarray(0, V3_HEADER_LEN).toString('hex'))
-  console.log('Body hex:', msg.subarray(V3_HEADER_LEN).toString('hex').substring(0, 100) + '...')
+  messages.push({ name: 'plain', buf: plainMsg })
+  console.log(`\nplain: ${plainMsg.length} bytes, mask: 0x${plainMsg[1].toString(16)}, seq: ${messages.length}`)
 
   // Send to P2P servers and listen for response
   const socket = createSocket('udp4')
@@ -127,18 +151,43 @@ async function main() {
     const localPort = socket.address().port
     console.log(`\nBound to port ${localPort}`)
 
-    // Send both encrypted and plain to all servers
-    for (const server of p2pServers) {
-      console.log(`Sending ENCRYPTED P2P_SETUP to ${server.ip}:${server.port}`)
-      socket.send(msgEncrypted, server.port, server.ip)
+    // Update local address in attrs and rebuild messages
+    const localAddr = `0.0.0.0:${localPort}`
+    const addrAttr = attrs.find(a => a.tag === 0x74)
+    if (addrAttr) addrAttr.value = Buffer.from(localAddr)
+
+    // Rebuild all messages with real local port
+    messages.length = 0
+    for (const v of variants) {
+      const m = encodeV3Message({
+        msgType: Opcode.P2P_SETUP,
+        seqNum: messages.length + 1,
+        reserved: 0,
+        mask: defaultMask({ encrypt: true, saltVersion: v.saltVersion, saltIndex: v.saltIndex }),
+        attributes: attrs,
+      }, v.key)
+      messages.push({ name: v.name, buf: m })
     }
-    // Also try plain after a short delay
-    setTimeout(() => {
-      for (const server of p2pServers) {
-        console.log(`Sending PLAIN P2P_SETUP to ${server.ip}:${server.port}`)
-        socket.send(msgPlain, server.port, server.ip)
-      }
-    }, 1000)
+    const pm = encodeV3Message({
+      msgType: Opcode.P2P_SETUP,
+      seqNum: messages.length + 1,
+      reserved: 0,
+      mask: defaultMask(),
+      attributes: attrs,
+    })
+    messages.push({ name: 'plain', buf: pm })
+
+    // Send all variants to all servers with staggered timing
+    let delay = 0
+    for (const { name, buf } of messages) {
+      setTimeout(() => {
+        for (const server of p2pServers) {
+          console.log(`Sending ${name} to ${server.ip}:${server.port}`)
+          socket.send(buf, server.port, server.ip)
+        }
+      }, delay)
+      delay += 500
+    }
 
     setTimeout(() => {
       console.log('\nTimeout (10s)')
