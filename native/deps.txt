@@ -1,0 +1,65 @@
+=== libezstreamclient.so (7.2M) ===
+libhpr.so
+libSystemTransform.so
+libsrt.so
+libencryptprotect.so
+libPlayCtrl.so
+libFormatConversion.so
+libNPQos.so
+libz.so
+libmbedtls.so
+libmbedx509.so
+libmbedcrypto.so
+libysvqe_mobile.so
+libMNN.so
+libMNN_CL.so
+libandroid.so
+liblog.so
+libmarsxlog.so
+libHCCore.so
+libHCPlayBack.so
+libHCPreview.so
+libhcnetsdk.so
+libm.so
+libdl.so
+libc.so
+
+=== libhpr.so (1.1M) ===
+libm.so
+libstdc++.so
+libdl.so
+libc.so
+
+=== libstunClient.so (844K) ===
+liblog.so
+libhpr.so
+libm.so
+libgnustl_shared.so
+libstdc++.so
+libdl.so
+libc.so
+
+=== libNPQos.so (2.1M) ===
+liblog.so
+libdl.so
+libc.so
+libstdc++.so
+libm.so
+
+=== libmbedcrypto.so (388K) ===
+libc.so
+libm.so
+libdl.so
+
+=== libencryptprotect.so (12K) ===
+libdl.so
+liblog.so
+libstdc++.so
+libm.so
+libc.so
+
+=== libSystemTransform.so (1.4M) ===
+libc.so
+libm.so
+libdl.so
+
