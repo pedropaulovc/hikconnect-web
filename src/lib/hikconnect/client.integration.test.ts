@@ -21,7 +21,7 @@ describe.skipIf(skip)('HikConnectClient integration', () => {
     // List devices
     const devices = await client.getDevices()
     expect(devices.length).toBeGreaterThan(0)
-    console.log('Devices:', devices.map(d => `${d.deviceSerial} (${d.deviceName})`))
+    console.log('Devices:', devices.map(d => `${d.deviceSerial} (${d.name})`))
 
     const device = devices[0]
 

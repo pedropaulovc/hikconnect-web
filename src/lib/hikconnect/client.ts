@@ -49,7 +49,10 @@ export class HikConnectClient {
   }
 
   private url(path: string): string {
-    const base = this.session?.apiDomain ?? this.baseUrl
+    let base = this.session?.apiDomain ?? this.baseUrl
+    if (!base.startsWith('http://') && !base.startsWith('https://')) {
+      base = `https://${base}`
+    }
     return `${base}${path}`
   }
 
