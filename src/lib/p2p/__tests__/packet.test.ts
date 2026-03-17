@@ -12,7 +12,7 @@ describe('packet framing', () => {
   })
 
   it('round-trips encode/decode', () => {
-    const original = { type: PacketType.DATA as const, payloadLength: 1400, seqNum: 999 }
+    const original = { type: PacketType.DATA, payloadLength: 1400, seqNum: 999 }
     const header = encodeHeader(original)
     const decoded = decodeHeader(header)
     expect(decoded.type).toBe(original.type)

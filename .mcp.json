@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "kawaiidra": {
+      "type": "stdio",
+      "command": "/opt/kawaiidra-mcp/.venv/bin/python",
+      "args": ["/opt/kawaiidra-mcp/run_server.py"],
+      "env": {
+        "GHIDRA_INSTALL_DIR": "/opt/ghidra"
+      }
+    }
+  }
+}
