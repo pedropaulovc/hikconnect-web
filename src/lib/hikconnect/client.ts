@@ -5,6 +5,7 @@ import type {
   LoginResponse, RefreshResponse, DeviceListResponse, CameraListResponse,
   StreamTicketResponse, VtmInfoResponse, RelayServerResponse, RecordListResponse,
   VtmInfo, StreamServerConfig, RecordFile,
+  P2PDeviceListResponse, P2PConfig,
 } from './types'
 
 export type ClientOptions = {
@@ -166,5 +167,41 @@ export class HikConnectClient {
       `/v3/streaming/records?deviceSerial=${deviceSerial}&channelNo=${channelNo}&startTime=${startTime}&stopTime=${stopTime}&size=500`
     )
     return data.files ?? []
+  }
+
+  async getP2PConfig(deviceSerial: string): Promise<P2PConfig> {
+    const data = await this.get<P2PDeviceListResponse>(
+      '/v3/userdevices/v1/resources/pagelist?groupId=-1&limit=50&offset=0&filter=P2P,KMS,CONNECTION'
+    )
+
+    const servers = data.P2P?.[deviceSerial]
+    if (!servers) {
+      throw new Error(`No P2P servers found for device ${deviceSerial}`)
+    }
+
+    const kms = data.KMS?.[deviceSerial]
+    if (!kms) {
+      throw new Error(`No KMS entry found for device ${deviceSerial}`)
+    }
+
+    const conn = data.CONNECTION?.[deviceSerial]
+    if (!conn) {
+      throw new Error(`No CONNECTION entry found for device ${deviceSerial}`)
+    }
+
+    return {
+      servers,
+      secretKey: kms.secretKey,
+      keyVersion: Number(kms.version),
+      connection: {
+        localIp: conn.localIp,
+        netIp: conn.netIp,
+        localCmdPort: conn.localCmdPort,
+        netCmdPort: conn.netCmdPort,
+        localStreamPort: conn.localStreamPort,
+        netStreamPort: conn.netStreamPort,
+        wanIp: conn.wanIp,
+      },
+    }
   }
 }
