@@ -241,19 +241,39 @@ Java: NativeApi.createClient(initParam)
 
 Java: NativeApi.startPreview(handle)
   → ezstream_startPreview(handle)
-    → vtable[0x20] → EZMediaPreview::startPlayer()
-      → EZMediaBase::startPlayer() @ 0x27c3e0
-        → CASClient_InitLib()
-        → CASClient_CreateSessionEx()
-        → p2pnet_Init()
-        → p2pnet_SetStunAddress()
-        → p2pnet_CreateSession()
-        → p2pnet_GetSelfPunchInfo()  // STUN binding
-        → CAS sends punch info to peer
-        → p2pnet_SetPeerConnection()  // hole punch
-        → p2pnet_SendData()           // stream data
-        → HandleVideoStream()         // frame callback
+    → vtable[0x20] → startPlayer()
+      ├── EZStreamClientProxy side (network):
+      │     → CASClient_InitLib()
+      │     → CASClient_CreateSessionEx(statusCB, dataCB, userData)
+      │     → p2pnet_Init()
+      │     → p2pnet_SetStunAddress(stunIP, stunPort)
+      │     → p2pnet_CreateSession(notifyCB, recvDataCB, userData)
+      │     → p2pnet_GetSelfPunchInfo()  // STUN binding request
+      │     → CAS broker exchanges punch info with NVR
+      │     → p2pnet_SetPeerConnection(session, peerAddr, peerPort)
+      │     → p2pnet_SendData()           // stream request over P2P
+      │     → P2PNetRecvData()            // incoming video packets
+      │     → ezviz_ecdh_decECDHDataPackage()  // ChaCha20 decrypt
+      │     → HandleVideoStream()         // demux PS container
+      │     → onDataCallbackMedia()       // deliver to player
+      │
+      └── EZMediaBase side (player, decompiled @ 0x3217a4):
+            → PlayM4_GetPort()
+            → vtable[0x18]() → get encryption key
+            → PlayM4_SetSecretKey(port, 1, key, keyBits)
+            │  keyBits = 128 if key ≤ 16 bytes, else full length * 8
+            → PlayM4_SetEncryptTypeCallBack(port, 1, player_EncryptTypeCBFun)
+            → PlayM4_SetFileEndCallback()
+            → PlayM4_RegisterDecCallBack(player_DecodeCallback)
+            → PlayM4_SetDisplayCallBackEx(player_DisplayCBFun)
+            → PlayM4_SetStreamEndCallback()
+            → PlayM4_Play(port, surface)
 ```
+
+**Key insight:** EZStreamClientProxy handles CAS/P2P/crypto (network layer).
+EZMediaBase handles PlayM4 media decoding (player layer). For our TypeScript
+implementation, we only need the network layer — we pipe raw frames to FFmpeg
+instead of using PlayM4.
 
 ## Next Steps
 
