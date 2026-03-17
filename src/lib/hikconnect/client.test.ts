@@ -1,5 +1,5 @@
 // src/lib/hikconnect/client.test.ts
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { HikConnectClient } from './client'
 
 describe('HikConnectClient', () => {
@@ -53,8 +53,8 @@ describe('HikConnectClient', () => {
       expect(devices).toHaveLength(1)
       expect(devices[0].deviceSerial).toBe('ABC123')
 
-      const call = mockFetch.mock.calls[0] as unknown as [string, RequestInit]
-      const headers = new Headers(call[1].headers as HeadersInit)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const headers = new Headers((mockFetch.mock.lastCall as any)?.[1]?.headers as HeadersInit)
       expect(headers.get('sessionId')).toBe('sess123')
     })
   })
