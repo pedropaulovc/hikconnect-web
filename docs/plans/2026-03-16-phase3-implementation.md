@@ -975,53 +975,219 @@ git commit -m "feat: add HLS streaming API routes (start, playlist, segment, sto
 
 ---
 
-### Task 7: Provision ARM64 VPS and Deploy
+### Task 7: Containerized Deployment
 
-**This task is manual — instructions for the human.**
+**Files:**
+- Create: `Dockerfile`
+- Create: `docker-compose.yml`
+- Create: `.dockerignore`
+- Create: `native/stubs/build-stubs.sh`
 
-**Step 1: Create ARM64 VPS**
+The entire stack (Next.js + Java bridge + native libs + FFmpeg) runs in a single ARM64 container. Deployable on OCI Container Instances (free tier), any ARM64 Docker host, or cross-built with `docker buildx`.
 
-Oracle Cloud free tier (recommended):
-- Shape: VM.Standard.A1.Flex (ARM)
-- 4 OCPUs, 24GB RAM (free forever)
-- OS: Ubuntu 24.04 ARM64
+**Step 1: Create .dockerignore**
 
-**Step 2: Install dependencies on VPS**
-
-```bash
-sudo apt update && sudo apt install -y openjdk-21-jdk ffmpeg build-essential
+```
+node_modules
+.next
+.git
+.env.local
+*.pcap
+scripts/frida/
+/tmp/
 ```
 
-**Step 3: Deploy native libraries**
+**Step 2: Create multi-stage Dockerfile**
 
-```bash
-scp -r native/libs/ vps:/opt/hikconnect/libs/
-scp -r native/stubs/ vps:/tmp/stubs/
-ssh vps "cd /tmp/stubs && make"  # builds stub .so files into libs/
+```dockerfile
+# Dockerfile
+# Multi-stage build for ARM64 Hik-Connect streaming proxy
+
+# --- Stage 1: Build Android stub libraries ---
+FROM arm64v8/ubuntu:24.04 AS stubs-builder
+RUN apt-get update && apt-get install -y gcc && rm -rf /var/lib/apt/lists/*
+COPY native/stubs/ /build/stubs/
+COPY native/libs/ /build/libs/
+WORKDIR /build/stubs
+RUN make
+
+# --- Stage 2: Compile Java bridge ---
+FROM arm64v8/eclipse-temurin:21-jdk AS java-builder
+COPY native/bridge/src/ /build/src/
+WORKDIR /build
+RUN mkdir -p classes && \
+    javac -d classes \
+      src/com/ez/stream/NativeApi.java \
+      src/com/ez/stream/InitParam.java \
+      src/com/ez/stream/EZStreamCallback.java \
+      src/com/ez/stream/EZP2PServerInfo.java \
+      src/com/ez/stream/P2PServerKey.java \
+      src/com/hikconnect/bridge/StreamBridge.java
+
+# --- Stage 3: Build Next.js app ---
+FROM arm64v8/node:24-slim AS nextjs-builder
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+# --- Stage 4: Runtime image ---
+FROM arm64v8/ubuntu:24.04
+
+# Install minimal runtime deps
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      openjdk-21-jre-headless \
+      ffmpeg \
+      nodejs \
+      && rm -rf /var/lib/apt/lists/*
+
+# Native libraries (from APK extraction)
+COPY native/libs/ /opt/hikconnect/libs/
+# Android stub libraries (built in stage 1)
+COPY --from=stubs-builder /build/libs/liblog.so /opt/hikconnect/libs/
+COPY --from=stubs-builder /build/libs/libandroid.so /opt/hikconnect/libs/
+COPY --from=stubs-builder /build/libs/libmediandk.so /opt/hikconnect/libs/
+COPY --from=stubs-builder /build/libs/libEGL.so /opt/hikconnect/libs/
+COPY --from=stubs-builder /build/libs/libGLESv2.so /opt/hikconnect/libs/
+
+# Java bridge classes (built in stage 2)
+COPY --from=java-builder /build/classes/ /opt/hikconnect/bridge/classes/
+
+# Next.js standalone app (built in stage 3)
+COPY --from=nextjs-builder /app/.next/standalone/ /app/
+COPY --from=nextjs-builder /app/.next/static/ /app/.next/static/
+
+# HLS temp directory
+RUN mkdir -p /tmp/hls
+
+ENV LD_LIBRARY_PATH=/opt/hikconnect/libs
+ENV NATIVE_LIB_PATH=/opt/hikconnect/libs
+ENV BRIDGE_CLASS_PATH=/opt/hikconnect/bridge/classes
+ENV PORT=3000
+ENV HOSTNAME=0.0.0.0
+
+EXPOSE 3000
+
+WORKDIR /app
+CMD ["node", "server.js"]
 ```
 
-**Step 4: Deploy Java bridge**
+**Step 3: Create docker-compose.yml for local development**
 
-```bash
-scp -r native/bridge/ vps:/opt/hikconnect/bridge/
-ssh vps "cd /opt/hikconnect/bridge && javac -d classes src/com/ez/stream/*.java src/com/hikconnect/bridge/*.java"
+```yaml
+# docker-compose.yml
+services:
+  hikconnect:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - HIKCONNECT_BASE_URL=https://api.hik-connect.com
+      - DEVICE_VERIFICATION_CODE=${DEVICE_VERIFICATION_CODE:-ABCDEF}
+    volumes:
+      - hls-data:/tmp/hls
+    restart: unless-stopped
+
+volumes:
+  hls-data:
 ```
 
-**Step 5: Test library loading on VPS**
+**Step 4: Create build helper script**
 
 ```bash
-ssh vps "cd /opt/hikconnect && LD_LIBRARY_PATH=libs java -Djava.library.path=libs -cp bridge/classes com.hikconnect.bridge.StreamBridge '{}'"
+#!/bin/bash
+# native/stubs/build-stubs.sh
+# Build stub libraries — works on ARM64 natively or cross-compiles on x86_64
+set -euo pipefail
+
+cd "$(dirname "$0")"
+
+if [ "$(uname -m)" = "aarch64" ]; then
+  make CC=gcc
+elif command -v aarch64-linux-gnu-gcc &>/dev/null; then
+  make CC=aarch64-linux-gnu-gcc
+else
+  echo "ERROR: Not on ARM64 and no cross-compiler found."
+  echo "Install with: sudo apt install gcc-aarch64-linux-gnu"
+  exit 1
+fi
+
+echo "Stub libraries built successfully."
 ```
 
-**Step 6: Deploy Next.js app**
+**Step 5: Add Next.js standalone output config**
+
+Update `next.config.ts`:
+
+```typescript
+import type { NextConfig } from 'next'
+
+const nextConfig: NextConfig = {
+  output: 'standalone',
+}
+
+export default nextConfig
+```
+
+**Step 6: Test Docker build (on ARM64 or with buildx)**
+
+On ARM64:
+```bash
+docker build -t hikconnect-web .
+docker run -p 3000:3000 -e DEVICE_VERIFICATION_CODE=ABCDEF hikconnect-web
+```
+
+Cross-build from x86_64:
+```bash
+docker buildx create --use
+docker buildx build --platform linux/arm64 -t hikconnect-web --load .
+```
+
+**Step 7: Deploy to OCI Container Instance**
 
 ```bash
-# On VPS
-git clone <repo> /opt/hikconnect/web
-cd /opt/hikconnect/web
-npm install
-NATIVE_LIB_PATH=/opt/hikconnect/libs BRIDGE_CLASS_PATH=/opt/hikconnect/bridge/classes npm run build
-NATIVE_LIB_PATH=/opt/hikconnect/libs BRIDGE_CLASS_PATH=/opt/hikconnect/bridge/classes npm start
+# Tag and push to OCI Container Registry
+OCI_REGION=us-ashburn-1
+OCI_TENANCY=<your-tenancy-namespace>
+OCI_REPO=$OCI_REGION.ocir.io/$OCI_TENANCY/hikconnect-web
+
+docker tag hikconnect-web $OCI_REPO:latest
+docker push $OCI_REPO:latest
+
+# Create Container Instance via OCI Console or CLI:
+# - Shape: CI.Standard.A1.Flex (ARM)
+# - OCPUs: 2, Memory: 12GB
+# - Image: $OCI_REPO:latest
+# - Port: 3000
+# - Env vars: HIKCONNECT_BASE_URL, DEVICE_VERIFICATION_CODE
+```
+
+Alternatively, use `oci` CLI:
+```bash
+oci container-instances container-instance create \
+  --display-name hikconnect-web \
+  --availability-domain <AD> \
+  --compartment-id <COMPARTMENT_OCID> \
+  --shape CI.Standard.A1.Flex \
+  --shape-config '{"ocpus": 2, "memoryInGBs": 12}' \
+  --containers '[{
+    "imageUrl": "'$OCI_REPO':latest",
+    "displayName": "web",
+    "environmentVariables": {
+      "HIKCONNECT_BASE_URL": "https://api.hik-connect.com",
+      "DEVICE_VERIFICATION_CODE": "ABCDEF"
+    }
+  }]' \
+  --vnics '[{"subnetId": "<SUBNET_OCID>"}]'
+```
+
+**Step 8: Commit**
+
+```bash
+git add Dockerfile docker-compose.yml .dockerignore native/stubs/build-stubs.sh
+git commit -m "feat: add containerized deployment with multi-stage Dockerfile"
 ```
 
 ---
@@ -1033,6 +1199,6 @@ The plan is structured as validation gates:
 2. **Task 3:** Can we create matching JNI classes? (Compile-time validation)
 3. **Task 4:** Can `initSDK()` run on ARM64 Linux? (Runtime validation — **the critical gate**)
 4. **Task 5-6:** Node.js orchestration (testable with mocks until Task 4 passes)
-5. **Task 7:** End-to-end on real ARM64 VPS
+5. **Task 7:** Container build + OCI deployment (end-to-end)
 
-If Task 4 fails (libraries won't load on Linux), we fall back to the Android emulator approach from the design doc.
+If Task 4 fails (libraries won't load on Linux), we fall back to the Android emulator approach from the design doc — the Dockerfile would use an Android emulator base image instead of bare ARM64 Ubuntu.
