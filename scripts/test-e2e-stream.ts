@@ -73,21 +73,28 @@ async function main() {
     }
   }
 
-  // Step 4b: Try P2P config endpoints
+  // Step 4b: P2P Config Discovery (endpoints found in APK dex)
   console.log('\n=== Step 4b: P2P Config Discovery ===')
   const session2 = client.getSession()!
   const base = `https://${session2.apiDomain}`
-  const headers = { sessionId: session2.sessionId, clientType: '55', featureCode: 'deadbeef' }
-  for (const path of [
-    '/v3/configurations/system/serverInfo',
-    '/v3/configurations/p2p/serverInfo',
-    `/v3/userdevices/v1/resources/pagelist?groupId=-1&limit=50&offset=0&filter=P2P`,
-  ]) {
-    try {
-      const r = await fetch(base + path, { headers })
-      const d = await r.json() as Record<string, unknown>
-      console.log(path, '→', JSON.stringify(d).substring(0, 300))
-    } catch (e) { console.log(path, '→ ERROR:', (e as Error).message) }
+  const headers: Record<string, string> = { sessionId: session2.sessionId, clientType: '55', featureCode: 'deadbeef' }
+
+  // Try the P2P SDK endpoints on multiple base URLs (found in APK dex)
+  const bases = [base, 'https://iusopen.ezvizlife.com']
+  for (const b of bases) {
+    for (const path of ['/api/sdk/p2p/user/info/get', `/api/sdk/p2p/dev/info/get`]) {
+      try {
+        const r = await fetch(b + path, {
+          method: 'POST',
+          headers: { ...headers, 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: `deviceSerial=${device.deviceSerial}`,
+        })
+        const text = await r.text()
+        const isJson = text.startsWith('{')
+        console.log(`POST ${b}${path}`)
+        console.log('  →', isJson ? text.substring(0, 500) : `HTML (${r.status})`)
+      } catch (e) { console.log(`POST ${b}${path} → ERROR:`, (e as Error).message) }
+    }
   }
 
   // Step 5: CAS broker connection
