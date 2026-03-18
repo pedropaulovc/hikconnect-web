@@ -4,7 +4,7 @@ description: Deferred work items for P2P/VTM streaming — updated after P2P_SET
 type: project
 ---
 
-## Deferred Streaming Work (updated 2026-03-18, with iVMS-4200 Ghidra findings)
+## Deferred Streaming Work (updated 2026-03-18, VPS-tested, video data received)
 
 ### Critical — Next Steps to Video
 
@@ -23,7 +23,18 @@ type: project
 
 3. **Data session may not need 0x7534/0x8000** — From iVMS-4200 RE, `StartStream` directly calls `BuildAndSendPlayRequest` with NO separate 0x7534/0x8000 step. Those packets are SRT/UDT transport layer (handled by srt.dll internally). After PLAY_REQUEST succeeds, video data should flow directly. Our `sendSessionSetup()` may be unnecessary or even harmful for the V3 path. **Test:** after fixing punch + PLAY_REQUEST, check if data flows without 0x7534.
 
-4. **Video data reception** — Receive data packets (0x41ab type), reassemble fragments, pipe through IMKH parser → FFmpeg → HLS.
+4. **~~Video data reception~~** — RESOLVED. SRT data packets with 0x8060 Hik-RTP frames received. H.265 4K video (3840x2160) decoded. VPS-tested.
+
+5. **Sustain SRT data flow** — SRT data arrives initially but stalls after seconds/minutes. The SRT congestion control needs proper ACK/NAK/keepalive at 10ms intervals. Options:
+   - (a) Implement minimal SRT receiver (ACK every 10ms, NAK on gaps)
+   - (b) Use `@eyevinn/srt` npm package (native SRT bindings)
+   - Current state: handshake works, data flows briefly, then stops
+
+6. **Wire real-time pipeline** — Once SRT flow is sustained:
+   - Strip 12B Hik-RTP + 13B sub-header from 0x8060 packets
+   - AES-128-ECB decrypt video slices (MD5 of verification code)
+   - Prepend Annex B start codes for VPS/SPS/PPS
+   - Pipe H.265 to FFmpeg → HLS → browser
 
 ### Resolved
 
