@@ -37,6 +37,9 @@ export type P2PSessionConfig = {
   streamType: number      // 0=main, 1=sub
   streamTokens: string[]  // Stream auth tokens from /api/user/token/get
   localPublicIp?: string  // Public IP for P2P_SETUP registration
+  busType?: number        // 1=live preview (default), 2=playback
+  startTime?: string      // Playback start time (YYYY-MM-DDTHH:MM:SS)
+  stopTime?: string       // Playback stop time (YYYY-MM-DDTHH:MM:SS)
 }
 
 // -- Packet types --
@@ -287,7 +290,7 @@ export class P2PSession extends EventEmitter {
     const writeTransforTlv = (tag: number, value: Buffer) => {
       transforParts.push(Buffer.from([tag, value.length]), value)
     }
-    writeTransforTlv(0x71, Buffer.from([0x01]))  // busType=1 (preview)
+    writeTransforTlv(0x71, Buffer.from([this.config.busType ?? 1]))  // busType (1=preview, 2=playback)
     writeTransforTlv(0x72, Buffer.from([0x03]))  // protocol flag (value=3 from capture)
     writeTransforTlv(0x75, Buffer.from([0x01]))  // flag (value=1 from capture)
     writeTransforTlv(0x7f, Buffer.from([0x0a]))  // NAT type/flag (value=0x0a from capture)
@@ -381,12 +384,13 @@ export class P2PSession extends EventEmitter {
     const serial = this.config.deviceSerial
     // Reuse the session key from P2P_SETUP — device expects matching key
     const sessionKey = this.currentSessionKey
+    const busType = this.config.busType ?? 1 // 1=preview, 2=playback
     const now = new Date()
 
-    // Format timestamps
+    // Format timestamps — use config times for playback, auto for preview
     const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-    const startTime = `${todayStr}T00:00:00`
-    const nowTime = `${todayStr}T${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`
+    const startTime = this.config.startTime ?? `${todayStr}T00:00:00`
+    const nowTime = this.config.stopTime ?? `${todayStr}T${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`
 
     // Build TLV attributes for PLAY_REQUEST (0x0c02)
     const attrs: Buffer[] = []
@@ -397,7 +401,7 @@ export class P2PSession extends EventEmitter {
       attrs.push(hdr, value)
     }
 
-    writeTlv(0x76, Buffer.from([0x01]))                          // busType=1 (live preview)
+    writeTlv(0x76, Buffer.from([busType]))                       // busType (1=preview, 2=playback)
     writeTlv(0x05, Buffer.from(sessionKey))                      // session key
     writeTlv(0x78, Buffer.from([this.config.streamType]))        // streamType
     writeTlv(0x77, (() => { const b = Buffer.alloc(2); b.writeUInt16BE(this.config.channelNo); return b })())

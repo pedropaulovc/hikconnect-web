@@ -54,6 +54,10 @@ export async function POST(req: Request) {
       channelNo: channel,
       streamType: 0, // main stream for playback
       verificationCode,
+      localPublicIp: process.env.PUBLIC_IP,
+      busType: 2, // playback mode
+      startTime,
+      stopTime,
       hls: {
         outputDir: hlsDir,
         segmentDuration: 4,
