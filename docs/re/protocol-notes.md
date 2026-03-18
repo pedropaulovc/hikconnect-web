@@ -368,7 +368,7 @@ MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEqzR4o4/j2vzZ0mBmp2ym1CJkX3jzgqS8fIxQ1lDTcil7
 - Serial: L38239367
 - Device IP: 24.35.64.195 (public), 192.168.0.101 (local)
 - Ports: cmdPort=9010, streamPort=9020, NAT-mapped streamPort=17193
-- Verification code: ABCDEF (6-char AES key for frame decryption)
+- Verification code: UNKNOWN — need from device sticker or Hik-Connect app. Used as AES-128-ECB key via `MD5(code)` for video slice decryption.
 - API domain: apiius.hik-connect.com
 - userId: fcfaec90a55f4a61b4e7211152a2d805
 - clientId: 0x0aed13f5 (from CGlobalInfo::GetClientId, hardcoded from capture)
