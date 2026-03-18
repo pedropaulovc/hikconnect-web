@@ -148,24 +148,24 @@ export class P2PSession extends EventEmitter {
   }
 
   private buildP2PServerRequest(): Buffer {
-    // V3 TRANSFOR_DATA message with encrypted session info
-    const v3msg = encodeV3Message({
+    // V3 TRANSFOR_DATA message with AES-encrypted session info
+    // Must use saltIndex/saltVer matching the P2P server key
+    return encodeV3Message({
       msgType: Opcode.TRANSFOR_DATA,
       seqNum: ++this.seqNum,
-      reserved: 0,
+      reserved: 0x6234, // Protocol version constant
       mask: defaultMask({
         encrypt: true,
         saltIndex: this.config.p2pKeySaltIndex,
         saltVersion: this.config.p2pKeySaltVer,
+        is2BLen: true,
       }),
       attributes: [
-        { tag: 0x02, value: Buffer.from(this.config.userId) },          // CLIENT_ID
-        { tag: 0x05, value: Buffer.from(this.config.sessionToken) },    // SESSION_KEY
-        { tag: 0x03, value: Buffer.from(this.config.deviceSerial) },    // DEVICE_CHANNEL
+        { tag: 0x02, value: Buffer.from(this.config.userId) },
+        { tag: 0x05, value: Buffer.from(this.config.sessionToken) },
+        { tag: 0x03, value: Buffer.from(this.config.deviceSerial) },
       ],
     }, this.config.p2pKey)
-
-    return v3msg
   }
 
   // -- Hole Punching --
@@ -184,40 +184,51 @@ export class P2PSession extends EventEmitter {
     const serial = this.config.deviceSerial
     const b64Serial = Buffer.from(serial).toString('base64')
 
-    // Build embedded V3 message for the session setup
-    const v3body = encodeV3Message({
-      msgType: 0x0c00, // Session setup command
+    // Build session key: base64(serial) + channel + YYYYMMDDHHmmss + 5-digit random
+    const now = new Date()
+    const dateStr = now.getFullYear().toString()
+      + String(now.getMonth() + 1).padStart(2, '0')
+      + String(now.getDate()).padStart(2, '0')
+      + String(now.getHours()).padStart(2, '0')
+      + String(now.getMinutes()).padStart(2, '0')
+      + String(now.getSeconds()).padStart(2, '0')
+    const rand5 = String(Math.floor(10000 + Math.random() * 90000))
+    const sessionKey = b64Serial + String(this.config.channelNo) + dateStr + rand5
+
+    // Build embedded V3 message (unencrypted, cmd 0x0c00)
+    const v3 = encodeV3Message({
+      msgType: 0x0c00,
       seqNum: ++this.seqNum,
-      reserved: 0,
-      mask: defaultMask(),
+      reserved: 0x6234, // Protocol version constant
+      mask: defaultMask({
+        saltVersion: this.config.p2pKeySaltVer,
+        saltIndex: this.config.p2pKeySaltIndex,
+        is2BLen: true,
+      }),
       attributes: [
-        { tag: 0x05, value: Buffer.from(b64Serial) },  // Base64 serial
-        { tag: 0x71, value: Buffer.from([0x01]) },      // Preview mode
-        { tag: 0x01, value: Buffer.from([0x01]) },       // Version
-        { tag: 0x82, value: Buffer.from([0x04, 0x00, 0x00, 0x00, 0x00]) }, // Port count
+        { tag: 0x05, value: Buffer.from(sessionKey) },
+        { tag: 0x71, value: Buffer.from([0x01]) },
+        { tag: 0x82, value: Buffer.alloc(4) },
       ],
     })
 
-    // Wrap in 7534 session packet
+    // Build 7534 packet: 28-byte header + V3 message
     const sessionId = ++this.sessionCounter
-    const pkt = Buffer.alloc(16 + v3body.length)
+    const pkt = Buffer.alloc(28 + v3.length)
     pkt.writeUInt16BE(PktType.SESSION_SETUP, 0)
-    pkt.writeUInt16BE(sessionId, 2)
+    pkt.writeUInt16BE(sessionId & 0xffff, 2)
     pkt.writeUInt16BE(0xc000, 4) // SYN flags
-    pkt.writeUInt16BE(this.seqNum, 6)
+    pkt.writeUInt16BE(this.seqNum & 0xffff, 6)
     pkt.writeUInt32BE(timestamp32(), 8)
     pkt.writeUInt32BE(this.sourceId, 12)
-    v3body.copy(pkt, 16)
+    pkt[16] = 0x80
+    pkt[17] = 0x7f
+    // Bytes 18-27: zeros (already)
+    v3.copy(pkt, 28)
 
-    // Pad to expected size
-    const fullPkt = Buffer.alloc(Math.max(pkt.length, 83))
-    pkt.copy(fullPkt)
-
-    this.sendToDevice(fullPkt.subarray(0, pkt.length))
-
-    // Retry a few times
-    setTimeout(() => this.sendToDevice(fullPkt.subarray(0, pkt.length)), 200)
-    setTimeout(() => this.sendToDevice(fullPkt.subarray(0, pkt.length)), 500)
+    this.sendToDevice(pkt)
+    setTimeout(() => this.sendToDevice(pkt), 200)
+    setTimeout(() => this.sendToDevice(pkt), 500)
   }
 
   // -- Connection Control (0x8000) --
@@ -286,6 +297,8 @@ export class P2PSession extends EventEmitter {
   // -- Packet Handler --
 
   private handlePacket(buf: Buffer, _fromAddr: string, _fromPort: number): void {
+    console.log(`[P2P] recv ${buf.length}B from ${_fromAddr}:${_fromPort} type=0x${buf.length >= 2 ? buf.readUInt16BE(0).toString(16) : '??'}`)
+
     if (buf.length < 2) return
 
     const type = buf.readUInt16BE(0)
@@ -400,11 +413,13 @@ export class P2PSession extends EventEmitter {
 
   private sendToDevice(data: Buffer): void {
     if (!this.socket) return
+    console.log(`[P2P] send ${data.length}B to ${this.config.devicePublicIp}:${this.config.devicePublicPort} type=0x${data.length >= 2 ? data.readUInt16BE(0).toString(16) : '??'}`)
     this.socket.send(data, this.config.devicePublicPort, this.config.devicePublicIp)
   }
 
   private sendTo(data: Buffer, port: number, host: string): void {
     if (!this.socket) return
+    console.log(`[P2P] send ${data.length}B to ${host}:${port}`)
     this.socket.send(data, port, host)
   }
 
