@@ -65,6 +65,7 @@ async function main() {
     deviceSerial: device.deviceSerial,
     ticket,
     sessionKey,
+    serverPublicKey: relay.publicKey?.key,
   })
 
   let totalBytes = 0
