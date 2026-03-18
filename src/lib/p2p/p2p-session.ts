@@ -12,7 +12,7 @@
 import { createSocket, type Socket as UdpSocket } from 'node:dgram'
 import { EventEmitter } from 'node:events'
 import { createCipheriv, randomUUID } from 'node:crypto'
-import { encodeV3Message, decodeV3Message, defaultMask, Opcode, crc8 } from './v3-protocol'
+import { encodeV3Message, decodeV3Message, defaultMask, Opcode, crc8, type V3Message } from './v3-protocol'
 
 // -- Config --
 
@@ -73,6 +73,12 @@ export class P2PSession extends EventEmitter {
   private dataSessionId = 0
   private keepaliveInterval: ReturnType<typeof setInterval> | null = null
   private _localPort = 0
+  // Device peer address — updated when device punches through (0x0C00)
+  private devicePeerIp: string | null = null
+  private devicePeerPort: number | null = null
+  private punchComplete = false
+  // Session key shared between P2P_SETUP and PLAY_REQUEST
+  private currentSessionKey: string = ''
 
   constructor(config: P2PSessionConfig) {
     super()
@@ -111,13 +117,13 @@ export class P2PSession extends EventEmitter {
 
     this.transition('punching')
 
-    // Step 1: Contact P2P servers for NAT traversal
+    // Step 1: P2P_SETUP → wait for device punch (0x0C00 → 0x0C01)
     await this.contactP2PServers()
 
-    // Step 2: Hole-punch to device
-    this.holePunch()
+    // Step 2: After punch completes, send PLAY_REQUEST
+    await this.sendPlayRequest()
 
-    // Step 3: Send session setup
+    // Step 3: Send session setup to device
     this.transition('setup')
     this.sendSessionSetup()
 
@@ -150,25 +156,61 @@ export class P2PSession extends EventEmitter {
     for (const server of this.config.p2pServers) {
       this.sendTo(setup, server.port, server.host)
     }
-    await delay(3000)
 
-    // Step 2: PLAY_REQUEST wrapped in TRANSFOR_DATA (0x0B04)
-    // The native app sends PLAY_REQUEST from a DIFFERENT UDP port than P2P_SETUP.
-    // Create a separate socket for the PLAY_REQUEST.
-    const playSocket = createSocket('udp4')
-    await new Promise<void>((resolve) => playSocket.bind(0, resolve))
+    // Step 2: Wait for device punch-through (0x0C00)
+    // After P2P_SETUP, the server notifies the device, which sends us 0x0C00.
+    // Our handleV3Response() will catch it and send 0x0C01 response.
+    console.log('[P2P] P2P_SETUP sent, waiting for device punch (0x0C00)...')
+    await this.waitForPunch(10_000)
 
-    playSocket.on('message', (msg, rinfo) => {
-      this.handlePacket(msg, rinfo.address, rinfo.port)
-    })
-
-    const msg = this.buildP2PServerRequest()
-    for (const server of this.config.p2pServers) {
-      playSocket.send(msg, server.port, server.host)
-      console.log(`[P2P] send ${msg.length}B to ${server.host}:${server.port} (play socket)`)
+    if (this.punchComplete) {
+      console.log(`[P2P] Hole-punch complete! Device at ${this.devicePeerIp}:${this.devicePeerPort}`)
+    } else {
+      console.log('[P2P] Punch timeout — device did not send 0x0C00. Trying direct punch...')
+      // Fallback: send empty packets to the known device address
+      this.holePunch()
+      await delay(2000)
     }
+  }
+
+  private async sendPlayRequest(): Promise<void> {
+    // Path A: Send PLAY_REQUEST directly to device (via punched connection)
+    if (this.punchComplete && this.devicePeerIp && this.devicePeerPort) {
+      const directMsg = this.buildDirectPlayRequest()
+      for (let i = 0; i < 3; i++) {
+        this.sendTo(directMsg, this.devicePeerPort, this.devicePeerIp)
+      }
+      console.log(`[P2P] PLAY_REQUEST sent directly to device ${this.devicePeerIp}:${this.devicePeerPort}`)
+    }
+
+    // Path B: Send PLAY_REQUEST via P2P server relay (TRANSFOR_DATA wrapper)
+    const relayMsg = this.buildP2PServerRequest()
+    for (const server of this.config.p2pServers) {
+      this.sendTo(relayMsg, server.port, server.host)
+      console.log(`[P2P] PLAY_REQUEST sent via relay ${server.host}:${server.port}`)
+    }
+
     await delay(3000)
-    playSocket.close()
+  }
+
+  private waitForPunch(timeoutMs: number): Promise<void> {
+    return new Promise((resolve) => {
+      if (this.punchComplete) {
+        resolve()
+        return
+      }
+
+      const timeout = setTimeout(() => {
+        this.removeListener('punchComplete', onPunch)
+        resolve()
+      }, timeoutMs)
+
+      const onPunch = () => {
+        clearTimeout(timeout)
+        resolve()
+      }
+      this.once('punchComplete', onPunch)
+    })
   }
 
   private buildP2PSetupRequest(): Buffer {
@@ -195,6 +237,7 @@ export class P2PSession extends EventEmitter {
       + String(now.getSeconds()).padStart(2, '0')
     const rand5 = String(Math.floor(10000 + Math.random() * 90000))
     const sessionKey = b64Serial + String(this.config.channelNo) + dateStr + rand5
+    this.currentSessionKey = sessionKey // Store for PLAY_REQUEST reuse
     const localAddr = this.socket?.address()
     const localPort = localAddr?.port || 0
     // Use configured public IP if available, fall back to socket address
@@ -226,8 +269,9 @@ export class P2PSession extends EventEmitter {
     writeTransforTlv(0x75, Buffer.from([0x01]))  // flag (value=1 from capture)
     writeTransforTlv(0x7f, Buffer.from([0x0a]))  // NAT type/flag (value=0x0a from capture)
     writeTransforTlv(0x74, Buffer.from(`${localIp}:${localPort}`))  // local address
-    const routingVal = Buffer.alloc(4)
-    writeTransforTlv(0x8c, routingVal)           // routing value (zeros)
+    const clientIdBuf = Buffer.alloc(4)
+    clientIdBuf.writeUInt32BE(this.config.clientId)
+    writeTransforTlv(0x8c, clientIdBuf)          // clientId (from iVMS-4200 RE: tag=0x8C = clientId)
     const transforData = Buffer.concat(transforParts)
     writeTlv(0xff, transforData)
 
@@ -686,16 +730,81 @@ export class P2PSession extends EventEmitter {
   }
 
   private handleV3Response(buf: Buffer, fromAddr: string, fromPort: number): void {
+    // Try decrypted first (from P2P server), then unencrypted (from device)
+    let msg: V3Message | null = null
     try {
-      const msg = decodeV3Message(buf, this.config.p2pKey)
-      console.log(`[P2P] V3 response from ${fromAddr}:${fromPort} cmd=0x${msg.msgType.toString(16)} attrs=${msg.attributes.length}`)
-      for (const attr of msg.attributes) {
-        console.log(`  attr tag=0x${attr.tag.toString(16)} len=${attr.value.length} val=${attr.value.toString('hex')}`)
+      msg = decodeV3Message(buf, this.config.p2pKey)
+    } catch {
+      try {
+        msg = decodeV3Message(buf)
+      } catch (err) {
+        console.log(`[P2P] V3 decode error: ${err instanceof Error ? err.message : err}`)
+        return
       }
-      this.emit('v3message', msg)
-    } catch (err) {
-      console.log(`[P2P] V3 decode error: ${err instanceof Error ? err.message : err}`)
     }
+
+    console.log(`[P2P] V3 response from ${fromAddr}:${fromPort} cmd=0x${msg.msgType.toString(16)} attrs=${msg.attributes.length}`)
+    for (const attr of msg.attributes) {
+      console.log(`  attr tag=0x${attr.tag.toString(16)} len=${attr.value.length} val=${attr.value.toString('hex')}`)
+    }
+
+    // Handle device hole-punch request (0x0C00)
+    if (msg.msgType === Opcode.PUNCH_REQUEST) {
+      this.handlePunchRequest(msg, fromAddr, fromPort)
+      return
+    }
+
+    // Handle device punch response (0x0C01)
+    if (msg.msgType === Opcode.PUNCH_RESPONSE) {
+      console.log(`[P2P] Received punch response from ${fromAddr}:${fromPort}`)
+      return
+    }
+
+    this.emit('v3message', msg)
+  }
+
+  private handlePunchRequest(msg: V3Message, fromAddr: string, fromPort: number): void {
+    console.log(`[P2P] Device punch request (0x0C00) from ${fromAddr}:${fromPort}`)
+
+    // Update device peer address to the actual source of the punch
+    this.devicePeerIp = fromAddr
+    this.devicePeerPort = fromPort
+
+    // Send punch response (0x0C01) back to device — 10 times for reliability
+    // From iVMS-4200 RE: CCasP2PClient::HandlePunchReqPackage sends 10x
+    const response = this.buildPunchResponse(msg)
+    for (let i = 0; i < 10; i++) {
+      this.sendTo(response, fromPort, fromAddr)
+    }
+    console.log(`[P2P] Sent 10x punch response (0x0C01) to ${fromAddr}:${fromPort}`)
+
+    // Mark punch as complete
+    this.punchComplete = true
+    this.emit('punchComplete')
+  }
+
+  private buildPunchResponse(punchRequest: V3Message): Buffer {
+    // Build 0x0C01 punch response — mirrors the punch request attributes
+    // From iVMS-4200 RE: the response is an unencrypted V3 message
+    return encodeV3Message({
+      msgType: Opcode.PUNCH_RESPONSE,
+      seqNum: ++this.seqNum,
+      reserved: 0x6234,
+      mask: defaultMask({
+        saltVersion: this.config.p2pKeySaltVer,
+        saltIndex: this.config.p2pKeySaltIndex,
+        is2BLen: true,
+      }),
+      attributes: punchRequest.attributes,
+    })
+  }
+
+  private buildDirectPlayRequest(): Buffer {
+    // Build PLAY_REQUEST (0x0C02) for direct device communication.
+    // This is the inner V3 message only (no TRANSFOR_DATA wrapper).
+    // Uses P2PLinkKey encryption + expand header.
+    const innerBody = this.buildPlayRequestBody()
+    return this.buildInnerV3Message(innerBody)
   }
 
   private handleSessionSetup(buf: Buffer): void {
@@ -764,8 +873,11 @@ export class P2PSession extends EventEmitter {
 
   private sendToDevice(data: Buffer): void {
     if (!this.socket) return
-    console.log(`[P2P] send ${data.length}B to ${this.config.devicePublicIp}:${this.config.devicePublicPort} type=0x${data.length >= 2 ? data.readUInt16BE(0).toString(16) : '??'}`)
-    this.socket.send(data, this.config.devicePublicPort, this.config.devicePublicIp)
+    // Prefer punched peer address (from 0x0C00) over config address
+    const ip = this.devicePeerIp ?? this.config.devicePublicIp
+    const port = this.devicePeerPort ?? this.config.devicePublicPort
+    console.log(`[P2P] send ${data.length}B to ${ip}:${port} type=0x${data.length >= 2 ? data.readUInt16BE(0).toString(16) : '??'}`)
+    this.socket.send(data, port, ip)
   }
 
   private sendTo(data: Buffer, port: number, host: string): void {

@@ -94,6 +94,148 @@ Outer V3 envelope (12B header + AES-CBC encrypted body):
 
 **Current status:** P2P_SETUP succeeds, device sends 0x0C00 PREVIEW_RSP packets. PLAY_REQUEST from separate socket still gets "Link status invalid" — need to figure out whether PLAY_REQUEST should go to device directly or requires different socket/timing.
 
+#### iVMS-4200 Ghidra RE Findings (2026-03-17)
+
+**Source:** `libCASClient.dll` from iVMS-4200 V3.13.2.5 (x86-64 PE), decompiled via Ghidra.
+
+##### 0x0C00 Is a HOLE-PUNCH REQUEST (Not PREVIEW_RSP)
+
+From `CP2PV3Client::HandleUdpData` case `0xc00`:
+```
+1. Verify session UUID matches our P2P_SETUP session
+2. If socket mismatch: CLOSE old socket, adopt new socket from device packet
+3. Set device-punched-through flag = true
+4. HPR_SetTTL(socket, 0x80) — increase TTL for the punched connection
+5. Record device's source IP:port as the peer address
+6. FUN_180006d70 — saves device address for subsequent use
+```
+
+The log says "Recv Device PunchReq" — this is the device punching through to us, NOT a preview response. After receiving 0x0C00:
+- The client knows the device's public IP:port
+- The client should send a 0x0C01 (punch response) back to the device
+- The punched socket is then used for UDT/SRT establishment
+
+0x0C01 = "Device Punch Response Package" — sent when the device's punch arrives.
+
+**Implication:** Our code receives 0x0C00 but doesn't respond with 0x0C01 and doesn't start the UDT/SRT connection. This explains why PLAY_REQUEST via server relay fails — the device expects direct communication after the punch.
+
+##### PLAY_REQUEST Routing — DUAL PATH (Critical Finding)
+
+`CP2PV3Client::SendRequest` sends PLAY_REQUEST via **two paths simultaneously**:
+
+1. **UDT (direct to device):** If a UDT socket is established and in good state (not BROKEN/CLOSING/NONEXIST), send the raw PLAY_REQUEST (0x0C02) directly via SRT/UDT to the device. This is the fast path.
+2. **P2P server relay (TRANSFOR_DATA):** Build a TRANSFOR_DATA (0x0B04) wrapper around the PLAY_REQUEST and send to P2P server. The server relays to device.
+
+**Implication for our code:** We're only sending via path 2 (P2P server relay). The "Link status invalid" error (0xcb) likely means we need to establish the UDT/direct connection first via hole punching, then send PLAY_REQUEST directly on that socket.
+
+The flow in the native code:
+```
+1. CASClient_SetupPreConnection → hole punch → UDT socket established
+2. CASClient_BuildDataLink → CP2PV3Client::BuildAndSendPlayRequest
+   a. Try UDT socket (srt_getsockstate check) → send PLAY_REQUEST directly
+   b. Build TRANSFOR_DATA wrapper → send via P2P server relay
+   c. Wait for response on either path
+```
+
+##### V3 Header Construction (Confirmed)
+
+From `CV3Protocol::BuildMessage`:
+```
+Byte 0:  0xE2 (magic, -0x1E as signed byte)
+Byte 1:  mask byte (bitfield: encrypt|expand|flags)
+Byte 2-3: opcode (network byte order, htons)
+Byte 4-7: sequence number (network byte order, htonl)
+Byte 8-9: reserved (from param_2[0], the "0x6234" field)
+Byte 10: total header length (base=12 + expand header length)
+Byte 11: CRC-8 of bytes 0-10
+```
+
+Sequence number is a global incrementing counter with mutex lock.
+
+##### P2P_SETUP (0x0B02) Sub-TLV Container (tag=0xFF) — Complete
+
+From `FUN_180091cd0` (ComposeSetup sub-TLV builder):
+```
+tag=0x71 ('q'): param_3[0] — client NAT type (1 byte)
+tag=0x72 ('r'): param_3[1] — protocol/relay flag (1 byte)
+tag=0x75 ('u'): param_3[2] — support flags (1 byte)
+tag=0x7F:       param_3[3] — NAT subtype / mobile network type (1 byte)
+tag=0x74 ('t'): "IP:port" — client reflexive address (STUN-discovered, only if set)
+tag=0x73 ('s'): "IP:port" — client local address (only if set)
+tag=0x8C:       param_3+0x98 (4B BE) — clientId
+```
+
+**Key finding:** Tag `0x8C` is the **clientId** (4 bytes, big-endian). Our current code sends it but as zeros. The `StartPreconnection` log confirms params: `clientId`, `NATType`, `Channel`, `StreamType`, `casIP`, `stunIP`, `casPort`, `stunPort`.
+
+##### PLAY_REQUEST (0x0C02) TLV Body — Complete
+
+From `FUN_18008fbf0` case `0xc02`:
+```
+tag=0x76 ('v'): busType (1B) — 1=preview, 2=playback, 4=download
+tag=0x05:       sessionKey (string, base64-encoded)
+tag=0x78 ('x'): streamType (1B) — 0=main, 1=sub
+tag=0x77 ('w'): channelNo (2B BE, uint16)
+tag=0x7E ('~'): deviceSessionId (4B BE, uint32)
+tag=0x79 ('y'): operationCode (string)
+tag=0x7C ('|'): shareTicket (string)
+tag=0x7D ('}'):  timeout/playSession (4B BE, uint32)
+```
+
+Conditional tags for playback (busType=0x02 or 0x04):
+```
+tag=0xAE: ecdhKeyVersion (4B BE) — only if param_4[0x13F] != 0
+tag=0xAF: ecdhKeyInfo (4B BE) — only if param_4[0x140] != 0
+```
+
+##### TRANSFOR_DATA (0x0B04) TLV Body
+
+```
+tag=0x00: device serial (string)
+tag=0x07: inner V3 message (the wrapped command, e.g., PLAY_REQUEST)
+```
+
+##### TRANSFOR_DATA_RSP (0x0B05) TLV Body
+
+```
+tag=0x02: result code (4B BE) — 0=success
+tag=0x07: response data (inner V3 response)
+```
+
+##### BuildSendMsg Encryption Logic
+
+From `CP2PTransfer::BuildSendMsg`:
+- The P2PKey (32 bytes) is stored at `param_1 + 0x136` (the key buffer)
+- P2PKey version is at `param_1[0xDE]` (2 bytes)
+- If key version is 0: use userId directly as key material (up to `param_1[0xE6]` length)
+- If key version > 0: use the P2PKey from `param_1 + 0xE2` (up to 32 bytes)
+- UserId must be >= 32 chars, else error "userid is invalid"
+
+##### P2P Protocol Version Dispatch
+
+From `CTransferClient::InitP2PClient`:
+- Version 2 → `CP2PV2Client` (legacy)
+- **Version 3** → `CP2PV3Client` (our target, current Hik-Connect)
+- Version 4 → `CP2PV21Client` (newer variant)
+
+##### P2PServerKey Source
+
+From `CP2PV3Client::BuildMsg` / `BuildTransMsg`:
+- First checks `param_1 + 0x310` — if set, uses custom key from `param_1 + 0x311` (redirect info)
+- Otherwise calls `FUN_180053f40(DAT_180172aa0, ...)` to get key from global config (`CGlobalInfo::SetP2PV3ConfigInfo`)
+- Returns key + 2 version bytes (`local_38` and `local_37`)
+- Error "P2PServer KeyInfo is invalid, maybe not init KEYINFO" if both version bytes are -1
+
+##### Key API Endpoints (from OpenNetStream.dll strings)
+
+```
+/api/sdk/p2p/dev/info/get   — device P2P info (serial, IP, ports, NAT type)
+/api/sdk/p2p/user/info/get  — user P2P info (P2PServerKey, clientId)
+/api/service/media/streaming/relay/server — VTM relay server info
+/api/service/media/streaming/relay/ticket — relay stream ticket
+```
+
+These are the SDK API paths — the consumer app equivalents may differ (our API uses `/api/user/token/get`).
+
 ### Path B: VTM Relay (TCP) — STATUS: ECDH handshake partially decoded
 
 **VTM Server:** `148.153.53.29:8554` (vtmvirginia.ezvizlife.com)

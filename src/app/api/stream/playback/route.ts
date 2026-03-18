@@ -37,16 +37,20 @@ export async function POST(req: Request) {
 
     // For playback, we use streamType=0 (main stream) and busType would be 2
     // The P2P session needs to send a playback request instead of preview
+    const p2pLinkKey = Buffer.from(p2pConfig.secretKey.substring(0, 32), 'ascii')
     const stream = new LiveStream({
       deviceSerial,
       deviceIp: p2pConfig.connection.netIp || p2pConfig.connection.wanIp,
       devicePort: p2pConfig.connection.netStreamPort || 9020,
       p2pServers: p2pConfig.servers.map(s => ({ host: s.ip, port: s.port })),
       p2pKey,
+      p2pLinkKey,
+      p2pKeyVersion: p2pConfig.keyVersion || 101,
       p2pKeySaltIndex: 3,
       p2pKeySaltVer: 1,
       sessionToken: client.getSession()!.sessionId,
       userId: '',
+      clientId: 0x0aed13f5, // TODO: fetch from API
       channelNo: channel,
       streamType: 0, // main stream for playback
       verificationCode,

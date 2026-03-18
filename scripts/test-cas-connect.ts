@@ -24,10 +24,10 @@ async function main() {
   console.log('\n=== Step 2: Get Stream Params ===')
   const devices = await client.getDevices()
   const device = devices[0]
-  console.log('Device:', device.deviceSerial, device.deviceName)
+  console.log('Device:', device.deviceSerial, device.name)
 
   const cameras = await client.getCameras(device.deviceSerial)
-  console.log('Cameras:', cameras.map(c => `ch${c.channelNo}: ${c.channelName}`))
+  console.log('Cameras:', cameras.map(c => `ch${c.channelNo}: ${c.cameraName}`))
 
   // Get VTM info for relay connection
   const vtm = await client.getVtmInfo(device.deviceSerial, cameras[0].channelNo)

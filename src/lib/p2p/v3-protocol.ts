@@ -16,6 +16,8 @@ export const Opcode = {
   TRANSFOR_CTRL: 0x0b03,
   TRANSFOR_DATA: 0x0b04,
   TRANSFOR_DATA2: 0x0b05,
+  PUNCH_REQUEST: 0x0c00,   // Device → Client: hole-punch request
+  PUNCH_RESPONSE: 0x0c01,  // Client → Device: hole-punch response
   PLAY_REQUEST: 0x0c02,
   TEARDOWN: 0x0c04,
   VOICE_TALK: 0x0c07,
