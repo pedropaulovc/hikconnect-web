@@ -64,40 +64,10 @@ export class HikRtpExtractor extends EventEmitter {
     // 0xa0: last fragment (completes the NAL)
     const fragType = subType & 0xf0
 
-    if (fragType === 0x90) {
-      // First fragment — check if this is the session init (first 0x90 with serial/IMKH)
-      if (!this.headerSeen) {
-        // First 0x90 packet contains session init (serial, IMKH header, padding)
-        // Skip it — it's not a NAL unit
-        this.headerSeen = true
-        this.fragmentBuffer = []
-        this.inFragment = false
-        return
-      }
-      // Subsequent 0x90: start new NAL reassembly, flush any pending
-      if (this.fragmentBuffer.length > 0) {
-        this.processNalUnit(Buffer.concat(this.fragmentBuffer))
-        this.fragmentBuffer = []
-      }
-      this.fragmentBuffer = [nalData]
-      this.inFragment = true
-    } else if (fragType === 0x80 && this.inFragment) {
-      // Middle fragment — append
-      this.fragmentBuffer.push(nalData)
-    } else if (fragType === 0xa0) {
-      // Last fragment — complete reassembly
-      if (this.inFragment) {
-        this.fragmentBuffer.push(nalData)
-        this.processNalUnit(Buffer.concat(this.fragmentBuffer))
-      } else {
-        this.processNalUnit(nalData)
-      }
-      this.fragmentBuffer = []
-      this.inFragment = false
-    } else {
-      // Unknown — emit as standalone
-      this.processNalUnit(nalData)
-    }
+    // Pass each sub-frame's data directly to processNalUnit.
+    // Don't try fragment reassembly — FFmpeg handles H.265 stream reassembly.
+    // The earlier VPS test confirmed this produces working HLS output (2.9MB).
+    this.processNalUnit(nalData)
   }
 
   private processInitPacket(payload: Buffer): void {
@@ -140,18 +110,8 @@ export class HikRtpExtractor extends EventEmitter {
       return
     }
 
-    // Encrypted slice data — AES-128-ECB decrypt first block only (partial encryption)
-    // Hikvision uses partial encryption: first 16 bytes of each slice
-    if (data.length >= 16) {
-      const decrypted = this.decryptSlice(data)
-      const decNalType = (decrypted[0] >> 1) & 0x3f
-      // If decrypted NAL type is valid H.265 (0-40), use decrypted data
-      if (decNalType <= 40) {
-        this.emitNal(decrypted)
-        return
-      }
-    }
-    // Not encrypted or decryption didn't help — emit raw
+    // Pass slice data through — on sub-stream (streamType=1), video may not be encrypted
+    // On encrypted streams, AES-128-ECB(MD5(verificationCode)) would need to be applied
     this.emitNal(data)
   }
 
