@@ -280,6 +280,62 @@ The native code uses srt.dll with functions like `srt_setrecvavail`, `srt_sendms
 2. Use raw UDP and handle reliability ourselves (risky, may not work)
 3. Use the TRANSFOR_DATA relay path (P2P server relays, bypasses SRT)
 
+##### Relay Client ECDH Requirement (Critical Finding)
+
+From `CRelayClient::SendClnConnectReq`:
+- If relay server provides a public key (publicKey.key != null), ECDH is REQUIRED
+- Flow: `ECDHCryption_GenerateMasterKey(serverPubKey)` → `GenerateSessionKey` → `CreateSession`
+- The body of ClnConnectReq is encrypted with the ECDH session key
+- Relay server closes connection if body is not properly encrypted
+
+This is the same ECDH P-256 handshake that blocks the VTM path.
+Both relay and VTM use `ECDHCryption_*` functions from the same library.
+
+**Tested:** Connecting to relay (148.153.39.254:6123) and sending unencrypted
+ClnConnectReq results in immediate connection close.
+
+##### ECDH Protocol (from ecdhCryption.dll Ghidra RE)
+
+**Key generation:** Standard ECDH P-256 (secp256r1). Client generates ephemeral key pair.
+
+**GenerateMasterKey:** `FUN_180002130`
+1. Load client private key and server public key (both as EC points)
+2. Select curve (param=3 → P-256)
+3. Compute ECDH shared secret (32 bytes)
+4. Output = shared secret bytes (stored as 4×8B = 32 bytes)
+
+**GenerateSessionKey:** `FUN_180016e00` — Counter-mode KDF
+1. Increments counter at context+0x0F
+2. Calls AES/HMAC block function (FUN_180009cd0) per 16-byte block
+3. Generates 32 bytes of session key material
+4. Similar to NIST SP 800-108 counter mode
+
+**EncECDHReqPackage:** `FUN_180002b30` — Request packet encryption
+Packet format:
+```
+Byte 0:      0x24 ('$') magic
+Byte 1:      0x01 (version)
+Byte 2:      0x00
+Byte 3-4:    body_length (2B BE)
+Byte 5:      0x01
+Byte 6:      channel_id (1 byte)
+Byte 7-10:   sequence (4B BE, starts at 1)
+Byte 11-42:  AES-encrypted shared secret (32B) — encrypted with session key
+Byte 43-133: client ECDH public key (91B SPKI/DER format)
+Byte 134+:   encrypted body payload (if body_length > 0)
+Last 32B:    HMAC-SHA256 over CRC of body and header
+```
+
+Total fixed overhead: 11 (header) + 32 (enc master key) + 91 (pubkey) + 32 (HMAC) = 166 bytes
+
+**Encryption algorithm dispatch** (switch on type 3-9):
+- Type 3: possibly AES-128-ECB
+- Type 4: possibly AES-128-CBC
+- Type 5/6: possibly AES-256-ECB/CBC
+- Type 7/8: possibly ChaCha20
+- Type 9: possibly AES-GCM
+The exact type is set during `FUN_180011fa0` initialization.
+
 ##### Key API Endpoints (from OpenNetStream.dll strings)
 
 ```
