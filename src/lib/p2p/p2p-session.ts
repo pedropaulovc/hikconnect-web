@@ -149,6 +149,17 @@ export class P2PSession extends EventEmitter {
   stop(): void {
     if (this.state === 'stopped') return
 
+    // Send SRT shutdown to cleanly release the device's stream slot
+    if (this.srtPeerSocketId) {
+      const shutdown = Buffer.alloc(16)
+      shutdown.writeUInt16BE(0x8005, 0) // F=1, control type=5 (shutdown)
+      shutdown.writeUInt16BE(0, 2)
+      shutdown.writeUInt32BE(0, 4)
+      shutdown.writeUInt32BE(timestamp32(), 8)
+      shutdown.writeUInt32BE(this.srtPeerSocketId, 12)
+      try { this.sendToDevice(shutdown) } catch {}
+    }
+
     this.stopSrtAckTimer()
     if (this.keepaliveInterval) {
       clearInterval(this.keepaliveInterval)
