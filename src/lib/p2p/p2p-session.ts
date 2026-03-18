@@ -77,7 +77,6 @@ export class P2PSession extends EventEmitter {
   private sourceId = 0
   private dataSessionId = 0
   private keepaliveInterval: ReturnType<typeof setInterval> | null = null
-  private _localPort = 0
   // Device peer address — updated when device punches through (0x0C00)
   private devicePeerIp: string | null = null
   private devicePeerPort: number | null = null
@@ -116,8 +115,6 @@ export class P2PSession extends EventEmitter {
 
     await new Promise<void>((resolve, reject) => {
       this.socket!.bind(0, () => {
-        const addr = this.socket!.address()
-        this._localPort = addr.port
         resolve()
       })
       this.socket!.once('error', reject)
@@ -476,82 +473,6 @@ export class P2PSession extends EventEmitter {
     return Buffer.concat([serialTag, tag07header, innerV3])
   }
 
-  private buildTeardownRequest(): Buffer {
-    // Build TEARDOWN (0x0c04) wrapped in TRANSFOR_DATA, same structure as PLAY_REQUEST
-    // Reuse the session key from P2P_SETUP (same session)
-    const attrs: Buffer[] = []
-    const writeTlv = (tag: number, value: Buffer) => {
-      attrs.push(Buffer.from([tag, value.length]), value)
-    }
-    writeTlv(0x05, Buffer.from(this.currentSessionKey))
-    writeTlv(0x76, Buffer.from([0x01]))  // busType=1 (preview)
-    writeTlv(0x77, (() => { const b = Buffer.alloc(2); b.writeUInt16BE(this.config.channelNo); return b })())
-    writeTlv(0x78, Buffer.from([this.config.streamType]))
-    writeTlv(0x84, Buffer.alloc(4))  // deviceSession=0
-
-    const teardownBody = Buffer.concat(attrs)
-
-    // Encrypt with P2PLinkKey
-    const linkKey = this.config.p2pLinkKey.subarray(0, 16)
-    const innerIv = Buffer.from('30313233343536370000000000000000', 'hex')
-    const innerCipher = createCipheriv('aes-128-cbc', linkKey, innerIv)
-    const encryptedBody = Buffer.concat([innerCipher.update(teardownBody), innerCipher.final()])
-
-    // Build expand header
-    const expandAttrs: Buffer[] = []
-    const writeExpTlv = (tag: number, value: Buffer) => {
-      expandAttrs.push(Buffer.from([tag, value.length]), value)
-    }
-    const keyVerBuf = Buffer.alloc(2)
-    keyVerBuf.writeUInt16BE(this.config.p2pKeyVersion)
-    writeExpTlv(0x00, keyVerBuf)
-    writeExpTlv(0x01, Buffer.from(this.config.userId))
-    const clientIdBuf = Buffer.alloc(4)
-    clientIdBuf.writeUInt32BE(this.config.clientId)
-    writeExpTlv(0x02, clientIdBuf)
-    const channelBuf = Buffer.alloc(2)
-    channelBuf.writeUInt16BE(this.config.channelNo)
-    writeExpTlv(0x03, channelBuf)
-
-    const expandHeader = Buffer.concat(expandAttrs)
-    const headerLen = 12 + expandHeader.length
-
-    // Inner V3 header with TEARDOWN opcode
-    const innerSeq = ++this.seqNum
-    const innerHeader = Buffer.alloc(12)
-    innerHeader[0] = 0xe2
-    innerHeader[1] = 0xde
-    innerHeader.writeUInt16BE(0x0c04, 2) // TEARDOWN
-    innerHeader.writeUInt32BE(innerSeq, 4)
-    innerHeader.writeUInt16BE(0x6234, 8)
-    innerHeader[10] = headerLen
-    innerHeader[11] = 0x00
-
-    const innerFull = Buffer.concat([innerHeader, expandHeader, encryptedBody])
-    innerFull[11] = crc8(innerFull)
-
-    // Wrap in outer TRANSFOR_DATA
-    const outerBody = this.buildOuterBody(innerFull)
-    const outerKey = this.config.p2pKey.subarray(0, 16)
-    const outerIv = Buffer.from('30313233343536370000000000000000', 'hex')
-    const outerCipher = createCipheriv('aes-128-cbc', outerKey, outerIv)
-    const encrypted = Buffer.concat([outerCipher.update(outerBody), outerCipher.final()])
-
-    const seq = ++this.seqNum
-    const header = Buffer.alloc(12)
-    header[0] = 0xe2
-    header[1] = 0xda
-    header.writeUInt16BE(Opcode.TRANSFOR_DATA, 2)
-    header.writeUInt32BE(seq, 4)
-    header.writeUInt16BE(0x6234, 8)
-    header[10] = 0x0c
-    header[11] = 0x00
-
-    const full = Buffer.concat([header, encrypted])
-    full[11] = crc8(full)
-    return full
-  }
-
   // -- Hole Punching --
 
   private holePunch(): void {
@@ -646,17 +567,6 @@ export class P2PSession extends EventEmitter {
     pkt.writeUInt32BE(0x3e8, 36)
     pkt.writeUInt32BE(0x38, 40)
 
-    this.sendToDevice(pkt)
-  }
-
-  // -- Short ACK (0x8006) --
-
-  private sendShortAck(_seq: number): void {
-    const pkt = Buffer.alloc(20)
-    pkt.writeUInt16BE(PktType.SHORT_ACK, 0)
-    // Copy seq into bytes 2-7
-    pkt.writeUInt32BE(timestamp32(), 8)
-    pkt.writeUInt32BE(this.sourceId, 12)
     this.sendToDevice(pkt)
   }
 
@@ -914,12 +824,12 @@ export class P2PSession extends EventEmitter {
     console.log(`[SRT] Sent induction response, cookie=0x${synCookie.toString(16)}, ourSocketId=0x${this.sourceId.toString(16)}`)
   }
 
-  private handleSrtConclusion(buf: Buffer, peerSocketId: number): void {
-    console.log(`[SRT] CONCLUSION received (${buf.length}B) — raw: ${buf.toString('hex')}`)
+  private handleSrtConclusion(_buf: Buffer, peerSocketId: number): void {
+    console.log(`[SRT] CONCLUSION received (${_buf.length}B)`)
 
     // The SRT connection is now established
     // Set data session from the initial sequence number
-    const initSeq = buf.readUInt32BE(24)
+    const initSeq = _buf.readUInt32BE(24)
     if (this.dataSessionId === 0) {
       this.dataSessionId = initSeq
       this.emit('dataSessionEstablished', initSeq)
