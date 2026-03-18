@@ -152,16 +152,20 @@ export function buildEcdhReqPacket(opts: {
   const { sessionKey, masterKey, clientPublicKey, channelId, body, seqNum = 1 } = opts
   const bodyLen = body?.length ?? 0
 
-  // Encrypt the master key with session key using AES-256-ECB (from Ghidra: param_3 = 0x100)
+  // Encrypt 32 zero bytes with session key using AES-256-ECB
+  // From Ghidra trace: the ECDH object has session key at [0:31] and zeros at [32:63].
+  // EncECDHReqPackage encrypts object[32:63] (zeros) with object[0:31] (session key).
+  // The "encrypted master key" field is actually encrypted zeros, NOT the master key.
+  const zeroBlock = Buffer.alloc(32)
   const cipher1 = createCipheriv('aes-256-ecb', sessionKey, null)
   cipher1.setAutoPadding(false)
-  const encMasterPart1 = cipher1.update(masterKey.subarray(0, 16))
+  const encPart1 = cipher1.update(zeroBlock.subarray(0, 16))
 
   const cipher2 = createCipheriv('aes-256-ecb', sessionKey, null)
   cipher2.setAutoPadding(false)
-  const encMasterPart2 = cipher2.update(masterKey.subarray(16, 32))
+  const encPart2 = cipher2.update(zeroBlock.subarray(16, 32))
 
-  const encryptedMaster = Buffer.concat([encMasterPart1, encMasterPart2])
+  const encryptedMaster = Buffer.concat([encPart1, encPart2])
 
   // Ensure public key is 91 bytes (SPKI/DER format)
   let pubKey = clientPublicKey
