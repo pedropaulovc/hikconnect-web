@@ -4,7 +4,7 @@ description: Deferred work items for P2P/VTM streaming — updated after P2P_SET
 type: project
 ---
 
-## Deferred Streaming Work (updated 2026-03-17, with iVMS-4200 Ghidra findings)
+## Deferred Streaming Work (updated 2026-03-18, with iVMS-4200 Ghidra findings)
 
 ### Critical — Next Steps to Video
 
@@ -51,6 +51,15 @@ type: project
     - `0x74` ('t'): client reflexive IP:port (STUN-discovered, optional)
     - `0x73` ('s'): client local IP:port (optional)
     - `0x8C`: clientId (4B BE)
+
+### Blocking — ECDH KDF for Relay/VTM
+
+13. **ECDH custom KDF (ecdhCryption.dll)** — Both relay and VTM paths require ECDH P-256 handshake. The ECDH shared secret computation and packet structure work (relay server responds instead of closing), but the **key derivation function** uses a custom Matyas-Meyer-Oseas hash (FUN_180016730) that is NOT a standard algorithm. Relay returns error 0x2715 (auth/decryption failure).
+    - Status: ECDH packet structure accepted, KDF produces wrong session key
+    - The custom hash uses AES-256-ECB with Merkle-Damgård padding
+    - Need: either exact FUN_180016730 implementation or packet capture from iVMS-4200
+    - Alternative: skip relay/VTM, use P2P direct path (no ECDH needed)
+    - Files: `src/lib/p2p/crypto.ts` (ecdhDeriveSessionKey), `src/lib/p2p/relay-client.ts`
 
 ### Important — Integration
 
