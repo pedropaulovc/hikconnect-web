@@ -74,6 +74,7 @@ async function main() {
   p2pSession.on('error', (err: Error) => console.log(`[ERR] ${err.message}`))
   p2pSession.on('stateChange', (s: { from: string; to: string }) => console.log(`[STATE] ${s.from} -> ${s.to}`))
   p2pSession.on('dataSessionEstablished', (id: number) => console.log(`[DATA-SESSION] 0x${id.toString(16)}`))
+  p2pSession.on('punchComplete', () => console.log(`[PUNCH] Hole-punch complete!`))
 
   await p2pSession.start()
   console.log('Waiting 60s...')
