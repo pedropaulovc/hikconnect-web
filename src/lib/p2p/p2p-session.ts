@@ -604,16 +604,16 @@ export class P2PSession extends EventEmitter {
     // bytes 2-7: zeros
     pkt.writeUInt32BE(timestamp32(), 8)
     pkt.writeUInt32BE(this.sourceId, 12)
-    // Connection params
-    pkt.writeUInt32BE(5, 16)          // param1
-    pkt.writeUInt32BE(0x4a17, 20)     // param2
+    // Match device's 0x8000 format from VPS capture:
+    // Device sends: param1=4, param2=2, sessionId, mtu=1500, window=32, version=1
+    pkt.writeUInt32BE(4, 16)          // param1 (matches device)
+    pkt.writeUInt32BE(2, 20)          // param2 (matches device)
     pkt.writeUInt32BE(dataSessionId, 24)
     pkt.writeUInt32BE(1500, 28)       // MTU
     pkt.writeUInt32BE(0x20, 32)       // window size
     pkt.writeUInt32BE(1, 36)          // version
-    pkt.writeUInt32BE(0x3e8, 40)      // param3
-    pkt.writeUInt32BE(0x38, 44)       // param4
-    pkt.writeUInt32BE(this.sourceId, 48)
+    pkt.writeUInt32BE(this.sourceId, 40)
+    // bytes 44-63: zeros
 
     this.sendToDevice(pkt)
   }
@@ -825,6 +825,12 @@ export class P2PSession extends EventEmitter {
 
   private handleConnectionControl(buf: Buffer): void {
     if (buf.length < 32) return
+
+    // Log the full 0x8000 packet for protocol analysis
+    console.log(`[P2P] 0x8000 raw (${buf.length}B): ${buf.toString('hex')}`)
+    if (buf.length >= 52) {
+      console.log(`[P2P] 0x8000 fields: sessionId=0x${buf.readUInt32BE(24).toString(16)} sourceId=0x${buf.readUInt32BE(12).toString(16)} mtu=${buf.readUInt32BE(28)} window=${buf.readUInt32BE(32)}`)
+    }
 
     // Extract data session ID from device's connection control
     const proposedDataSession = buf.readUInt32BE(24)
