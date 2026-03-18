@@ -146,20 +146,29 @@ export class P2PSession extends EventEmitter {
 
   private async contactP2PServers(): Promise<void> {
     // Step 1: P2P_SETUP (0x0B02) — registers "link" with P2P server
-    // This is the CAS broker registration step. Without it, PLAY_REQUEST
-    // returns error 203 "Link status invalid".
     const setup = this.buildP2PSetupRequest()
     for (const server of this.config.p2pServers) {
       this.sendTo(setup, server.port, server.host)
     }
-    await delay(2000)
+    await delay(3000)
 
     // Step 2: PLAY_REQUEST wrapped in TRANSFOR_DATA (0x0B04)
+    // The native app sends PLAY_REQUEST from a DIFFERENT UDP port than P2P_SETUP.
+    // Create a separate socket for the PLAY_REQUEST.
+    const playSocket = createSocket('udp4')
+    await new Promise<void>((resolve) => playSocket.bind(0, resolve))
+
+    playSocket.on('message', (msg, rinfo) => {
+      this.handlePacket(msg, rinfo.address, rinfo.port)
+    })
+
     const msg = this.buildP2PServerRequest()
     for (const server of this.config.p2pServers) {
-      this.sendTo(msg, server.port, server.host)
+      playSocket.send(msg, server.port, server.host)
+      console.log(`[P2P] send ${msg.length}B to ${server.host}:${server.port} (play socket)`)
     }
-    await delay(2000)
+    await delay(3000)
+    playSocket.close()
   }
 
   private buildP2PSetupRequest(): Buffer {
