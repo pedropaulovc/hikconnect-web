@@ -28,13 +28,10 @@ async function main() {
   console.log('Connection:', JSON.stringify(p2p.connection, null, 2))
 
   console.log('\n=== Step 3: Start P2P Session ===')
-  // P2P server key from Frida stP2PServerKey.szP2PKey (signed shorts → unsigned bytes)
-  // This key is different from the API's KMS secretKey
-  const p2pServerKeyShorts = [-28,70,95,45,1,30,-65,-99,-123,-21,50,-44,110,21,73,-67,-10,76,23,29,97,106,19,42,-6,-70,75,77,52,-118,57,-43]
-  const p2pKey = Buffer.from(p2pServerKeyShorts.map((s: number) => (s + 256) % 256))
-  console.log('P2P server key:', p2pKey.toString('hex').substring(0, 40) + '...')
-  console.log('API KMS key:', p2p.secretKey.substring(0, 40) + '...')
-  console.log('Keys match:', p2pKey.toString('hex') === p2p.secretKey)
+  // Use API KMS secretKey as the P2P key
+  const p2pKey = Buffer.from(p2p.secretKey, 'hex')
+  console.log('P2P key (from API KMS):', p2pKey.toString('hex').substring(0, 40) + '...')
+  console.log('P2P key length:', p2pKey.length, 'bytes')
 
   const p2pSession = new P2PSession({
     deviceSerial: 'L38239367',
