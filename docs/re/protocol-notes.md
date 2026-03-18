@@ -244,6 +244,42 @@ may be incorrect for the P2P V3 path. After PLAY_REQUEST succeeds, the device sh
 sending video data directly (possibly wrapped in SRT or raw UDP). The 0x7534/0x8000 packets
 we see in captures may be SRT session establishment that the SRT library handles automatically.
 
+##### Video Data Format (Hikvision Proprietary RTP over SRT)
+
+From `CP2PV3Client::HandleVideoStream`:
+
+Video data arrives in packets with a 12-byte header (RTP-like):
+```
+Offset 0-1:  packet type (2B, network order)
+Offset 2-3:  sequence number (2B, network order)
+Offset 4-7:  SSRC/session ID (4B, network order)
+Offset 8-11: timestamp (4B, network order)
+Offset 12+:  payload (up to 1588 bytes, max packet = 1600 bytes)
+```
+
+Packet types:
+```
+0x0100: Video data (standard, possibly I-frame)
+0x0200: Video data (standard, possibly P-frame)
+0x0201: Control packet
+0x8040: Connection info
+0x804F: UDT session response (→ HandleUDTSessionRsp)
+0x8050: Video data (alt framing)
+0x8051: Video data (alt framing)
+0x8060: Video data (alt framing, possibly audio)
+0x807F: Session control
+0x80FF: Command response
+```
+
+These packets flow OVER SRT (Secure Reliable Transport), not raw UDP.
+The native code uses srt.dll with functions like `srt_setrecvavail`, `srt_sendmsg`,
+`srt_getsockstate`, etc.
+
+**Options for Node.js implementation:**
+1. Use `node-srt` npm package (SRT bindings for Node.js)
+2. Use raw UDP and handle reliability ourselves (risky, may not work)
+3. Use the TRANSFOR_DATA relay path (P2P server relays, bypasses SRT)
+
 ##### Key API Endpoints (from OpenNetStream.dll strings)
 
 ```
