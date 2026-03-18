@@ -95,6 +95,31 @@ npx tsx scripts/test-p2p-v2.ts          # Legacy P2P server handshake test
 npx tsx scripts/test-vtm-connect.ts     # Test VTM relay connection
 ```
 
+### Running the Full Pipeline
+
+The P2P video streaming pipeline requires a server with a public IP (the device needs to UDP hole-punch to us). Deploy to a VPS:
+
+```bash
+# 1. Create VPS
+hcloud server create --name hikp2p --type cpx11 --location ash --image ubuntu-24.04 --ssh-key hikconnect
+
+# 2. Deploy + install
+rsync -az --exclude node_modules --exclude .next --exclude .git . root@IP:/root/hikconnect-web/
+ssh root@IP 'curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && apt-get install -y nodejs ffmpeg'
+ssh root@IP 'cd /root/hikconnect-web && npm install'
+
+# 3. Test P2P pipeline (saves H.265 + generates HLS)
+ssh root@IP 'cd /root/hikconnect-web && PUBLIC_IP=<VPS_IP> npx tsx scripts/test-p2p-to-ffmpeg.ts'
+
+# 4. Run web app (Next.js on port 3000)
+ssh root@IP 'cd /root/hikconnect-web && PUBLIC_IP=<VPS_IP> npx next dev --hostname 0.0.0.0'
+
+# 5. Cleanup
+hcloud server delete hikp2p
+```
+
+**Important:** The NVR limits concurrent P2P streams. Wait 30+ seconds between connection attempts. After many rapid connections (~20), the device may need hours of cooldown or a reboot.
+
 ### VPS for P2P Testing
 
 ```bash
