@@ -15,7 +15,6 @@
 
 import { Socket } from 'node:net'
 import { EventEmitter } from 'node:events'
-import { createCipheriv } from 'node:crypto'
 import {
   generateKeyPair,
   deriveSharedSecret,
@@ -255,25 +254,20 @@ export class RelayClient extends EventEmitter {
     const sessionKey = ecdhDeriveSessionKey(masterKey, 32)
     console.log(`[Relay] Session key: ${sessionKey.toString('hex').substring(0, 20)}...`)
 
-    // 5. Encrypt the body with AES-128-CBC using session key
-    const encKey = sessionKey.subarray(0, 16)
-    const iv = Buffer.alloc(16) // Zero IV (same pattern as V3 protocol? or counter-based)
-    const bodyCipher = createCipheriv('aes-128-cbc', encKey, iv)
-    const encryptedBody = Buffer.concat([bodyCipher.update(body), bodyCipher.final()])
-
-    // 6. Build ECDH encrypted request packet
+    // 5. Build ECDH encrypted request packet
+    // Body will be ChaCha20-encrypted inside buildEcdhReqPacket
     const packet = buildEcdhReqPacket({
       sessionKey,
       masterKey,
       clientPublicKey: clientKp.publicKey,
       channelId: 0x09,
-      bodyLength: encryptedBody.length,
-      body: encryptedBody,
+      bodyLength: body.length,
+      body,
       seqNum: ++this.seqNum,
     })
 
     this.sendRaw(packet)
-    console.log(`[Relay] Sent ECDH ClnConnectReq (${packet.length}B total, ${encryptedBody.length}B encrypted body, serial=${this.config.deviceSerial})`)
+    console.log(`[Relay] Sent ECDH ClnConnectReq (${packet.length}B total, ${body.length}B body, serial=${this.config.deviceSerial})`)
   }
 
   sendKeepalive(): void {
