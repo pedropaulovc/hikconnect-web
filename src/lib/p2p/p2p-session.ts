@@ -1,12 +1,11 @@
 /**
  * P2P Streaming Session — connects to device via Hikvision P2P protocol.
  *
- * Flow:
- * 1. Send V3 TRANSFOR_DATA to P2P servers for NAT traversal
- * 2. UDP hole-punch to device public IP
- * 3. Exchange session setup (7534) and connection control (8000)
- * 4. Receive video data (41ab) packets
- * 5. Reassemble fragments and emit 'data' events
+ * Flow (from iVMS-4200 Ghidra RE):
+ * 1. P2P_SETUP (0x0B02) → register with P2P servers
+ * 2. Wait for device hole-punch (0x0C00) → respond with 0x0C01 (10x)
+ * 3. PLAY_REQUEST (0x0C02) → direct to device + via TRANSFOR_DATA relay
+ * 4. Receive video data (SRT/UDP) and emit 'data' events
  */
 
 import { createSocket, type Socket as UdpSocket } from 'node:dgram'
@@ -60,6 +59,9 @@ function timestamp32(): number {
 function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
+
+/** AES-128-CBC IV used for ALL V3 encryption: "01234567" + 8 zero bytes */
+const HIK_AES_IV = Buffer.from('30313233343536370000000000000000', 'hex')
 
 // -- P2PSession --
 
@@ -280,7 +282,7 @@ export class P2PSession extends EventEmitter {
     // P2P_SETUP (0x0B02) is NOT in the "important opcodes" range (0x0c02-0x0c18).
     // BuildSendMsg uses P2PServerKey (not P2PLinkKey) and NO expand header for these opcodes.
     const serverKey = this.config.p2pKey.subarray(0, 16)
-    const iv = Buffer.from('30313233343536370000000000000000', 'hex') // "01234567" + zeros
+    const iv = HIK_AES_IV
     const cipher = createCipheriv('aes-128-cbc', serverKey, iv)
     const encryptedBody = Buffer.concat([cipher.update(body), cipher.final()])
 
@@ -331,7 +333,7 @@ export class P2PSession extends EventEmitter {
 
     // AES-128-CBC encrypt outer body with P2PServerKey
     const outerKey = this.config.p2pKey.subarray(0, 16)
-    const outerIv = Buffer.from('30313233343536370000000000000000', 'hex') // "01234567" + zeros
+    const outerIv = HIK_AES_IV
     const outerCipher = createCipheriv('aes-128-cbc', outerKey, outerIv)
     const encrypted = Buffer.concat([outerCipher.update(outerBody), outerCipher.final()])
 
@@ -356,16 +358,9 @@ export class P2PSession extends EventEmitter {
 
   private buildPlayRequestBody(): Buffer {
     const serial = this.config.deviceSerial
-    const b64Serial = Buffer.from(serial).toString('base64')
+    // Reuse the session key from P2P_SETUP — device expects matching key
+    const sessionKey = this.currentSessionKey
     const now = new Date()
-    const dateStr = now.getFullYear().toString()
-      + String(now.getMonth() + 1).padStart(2, '0')
-      + String(now.getDate()).padStart(2, '0')
-      + String(now.getHours()).padStart(2, '0')
-      + String(now.getMinutes()).padStart(2, '0')
-      + String(now.getSeconds()).padStart(2, '0')
-    const rand5 = String(Math.floor(10000 + Math.random() * 90000))
-    const sessionKey = b64Serial + String(this.config.channelNo) + dateStr + rand5
 
     // Format timestamps
     const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
@@ -399,7 +394,7 @@ export class P2PSession extends EventEmitter {
   private buildInnerV3Message(playRequestBody: Buffer): Buffer {
     // Encrypt PLAY_REQUEST body with P2PLinkKey
     const linkKey = this.config.p2pLinkKey.subarray(0, 16)
-    const innerIv = Buffer.from('30313233343536370000000000000000', 'hex') // "01234567" + zeros
+    const innerIv = HIK_AES_IV
     const innerCipher = createCipheriv('aes-128-cbc', linkKey, innerIv)
     const encryptedBody = Buffer.concat([innerCipher.update(playRequestBody), innerCipher.final()])
 
@@ -458,24 +453,12 @@ export class P2PSession extends EventEmitter {
 
   private buildTeardownRequest(): Buffer {
     // Build TEARDOWN (0x0c04) wrapped in TRANSFOR_DATA, same structure as PLAY_REQUEST
-    // TEARDOWN attributes: 0x05 (sessionKey), 0x76 (busType), 0x77 (channel), 0x78 (streamType), 0x84 (deviceSession=0)
-    const serial = this.config.deviceSerial
-    const b64Serial = Buffer.from(serial).toString('base64')
-    const now = new Date()
-    const dateStr = now.getFullYear().toString()
-      + String(now.getMonth() + 1).padStart(2, '0')
-      + String(now.getDate()).padStart(2, '0')
-      + String(now.getHours()).padStart(2, '0')
-      + String(now.getMinutes()).padStart(2, '0')
-      + String(now.getSeconds()).padStart(2, '0')
-    const rand5 = String(Math.floor(10000 + Math.random() * 90000))
-    const sessionKey = b64Serial + String(this.config.channelNo) + dateStr + rand5
-
+    // Reuse the session key from P2P_SETUP (same session)
     const attrs: Buffer[] = []
     const writeTlv = (tag: number, value: Buffer) => {
       attrs.push(Buffer.from([tag, value.length]), value)
     }
-    writeTlv(0x05, Buffer.from(sessionKey))
+    writeTlv(0x05, Buffer.from(this.currentSessionKey))
     writeTlv(0x76, Buffer.from([0x01]))  // busType=1 (preview)
     writeTlv(0x77, (() => { const b = Buffer.alloc(2); b.writeUInt16BE(this.config.channelNo); return b })())
     writeTlv(0x78, Buffer.from([this.config.streamType]))
@@ -730,17 +713,16 @@ export class P2PSession extends EventEmitter {
   }
 
   private handleV3Response(buf: Buffer, fromAddr: string, fromPort: number): void {
-    // Try decrypted first (from P2P server), then unencrypted (from device)
+    // Check encrypt bit (byte 1, bit 7) to decide decryption
+    const isEncrypted = (buf[1] & 0x80) !== 0
     let msg: V3Message | null = null
     try {
-      msg = decodeV3Message(buf, this.config.p2pKey)
-    } catch {
-      try {
-        msg = decodeV3Message(buf)
-      } catch (err) {
-        console.log(`[P2P] V3 decode error: ${err instanceof Error ? err.message : err}`)
-        return
-      }
+      msg = isEncrypted
+        ? decodeV3Message(buf, this.config.p2pKey)
+        : decodeV3Message(buf)
+    } catch (err) {
+      console.log(`[P2P] V3 decode error: ${err instanceof Error ? err.message : err}`)
+      return
     }
 
     console.log(`[P2P] V3 response from ${fromAddr}:${fromPort} cmd=0x${msg.msgType.toString(16)} attrs=${msg.attributes.length}`)
@@ -783,9 +765,11 @@ export class P2PSession extends EventEmitter {
     this.emit('punchComplete')
   }
 
-  private buildPunchResponse(punchRequest: V3Message): Buffer {
-    // Build 0x0C01 punch response — mirrors the punch request attributes
-    // From iVMS-4200 RE: the response is an unencrypted V3 message
+  private buildPunchResponse(_punchRequest: V3Message): Buffer {
+    // Build 0x0C01 punch response — send our session key to confirm the match.
+    // From iVMS-4200 RE: the response is an unencrypted V3 message.
+    // The native code verifies the session UUID matches, then sends a response
+    // with the client's own session key and status.
     return encodeV3Message({
       msgType: Opcode.PUNCH_RESPONSE,
       seqNum: ++this.seqNum,
@@ -795,7 +779,10 @@ export class P2PSession extends EventEmitter {
         saltIndex: this.config.p2pKeySaltIndex,
         is2BLen: true,
       }),
-      attributes: punchRequest.attributes,
+      attributes: [
+        { tag: 0x05, value: Buffer.from(this.currentSessionKey) },
+        { tag: 0x71, value: Buffer.from([0x01]) }, // busType=1 (preview)
+      ],
     })
   }
 
