@@ -14,8 +14,20 @@ import { P2PSession } from '../src/lib/p2p/p2p-session'
 
 const P2P_SERVER_KEY = Buffer.from('e4465f2d011ebf9d85eb32d46e1549bdf64c171d616a132afaba4b4d348a39d5', 'hex')
 
+async function getPublicIp(): Promise<string> {
+  try {
+    const resp = await fetch('https://api.ipify.org?format=json')
+    const data = await resp.json() as { ip: string }
+    return data.ip
+  } catch {
+    return '0.0.0.0'
+  }
+}
+
 async function main() {
+  console.log('Starting P2P test...')
   const client = new HikConnectClient({ baseUrl: 'https://api.hik-connect.com' })
+  console.log('Logging in...')
   const session = await client.login({ account: process.env.HIKCONNECT_ACCOUNT!, password: process.env.HIKCONNECT_PASSWORD! })
   console.log('Logged in, domain:', session.apiDomain)
 
@@ -59,16 +71,21 @@ async function main() {
     channelNo: 1,
     streamType: 1,
     streamTokens: tokens,
-    localPublicIp: '5.161.255.20',
+    // Auto-detect public IP or use env var
+    localPublicIp: process.env.PUBLIC_IP || await getPublicIp(),
   })
+
+  console.log('Local public IP:', p2pSession['config'].localPublicIp)
 
   p2pSession.on('data', (payload: Buffer) => {
     console.log(`[DATA] ${payload.length}B first: ${payload.subarray(0, 16).toString('hex')}`)
   })
-  p2pSession.on('v3message', (msg: { msgType: number; attributes: { tag: number; value: Buffer }[] }) => {
-    console.log(`[V3] cmd=0x${msg.msgType.toString(16)} attrs=${msg.attributes.length}`)
+  p2pSession.on('v3message', (msg: { msgType: number; seqNum: number; reserved: number; mask: { encrypt: boolean }; attributes: { tag: number; value: Buffer }[] }) => {
+    console.log(`[V3] cmd=0x${msg.msgType.toString(16)} seq=${msg.seqNum} reserved=0x${msg.reserved.toString(16)} encrypt=${msg.mask.encrypt} attrs=${msg.attributes.length}`)
     for (const a of msg.attributes) {
-      console.log(`  tag=0x${a.tag.toString(16)} len=${a.value.length} val=${a.value.toString('hex').substring(0, 60)}`)
+      const valHex = a.value.toString('hex').substring(0, 60)
+      const valAscii = a.value.toString('ascii').substring(0, 40).replace(/[^\x20-\x7e]/g, '.')
+      console.log(`  tag=0x${a.tag.toString(16)} len=${a.value.length} hex=${valHex} ascii=${valAscii}`)
     }
   })
   p2pSession.on('error', (err: Error) => console.log(`[ERR] ${err.message}`))
