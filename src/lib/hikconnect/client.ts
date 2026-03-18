@@ -23,6 +23,19 @@ function md5(input: string): string {
   return createHash('md5').update(input).digest('hex')
 }
 
+/** Extract userId from a Hik-Connect JWT sessionId's `aud` claim. */
+export function extractUserId(sessionId: string): string {
+  try {
+    const parts = sessionId.split('.')
+    if (parts.length !== 3) return ''
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString())
+    if (typeof payload.aud === 'string') return payload.aud
+    return ''
+  } catch {
+    return ''
+  }
+}
+
 export class HikConnectClient {
   private baseUrl: string
   private fetchFn: typeof fetch
