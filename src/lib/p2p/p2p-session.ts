@@ -81,6 +81,9 @@ export class P2PSession extends EventEmitter {
   private punchComplete = false
   // Session key shared between P2P_SETUP and PLAY_REQUEST
   private currentSessionKey: string = ''
+  // SRT handshake state
+  private srtSynCookie: number | null = null
+  private srtPeerSocketId: number | null = null
 
   constructor(config: P2PSessionConfig) {
     super()
@@ -598,25 +601,7 @@ export class P2PSession extends EventEmitter {
 
   // -- Connection Control (0x8000) --
 
-  private sendConnectionControl(dataSessionId: number): void {
-    const pkt = Buffer.alloc(64)
-    pkt.writeUInt16BE(PktType.CONN_CTRL, 0)
-    // bytes 2-7: zeros
-    pkt.writeUInt32BE(timestamp32(), 8)
-    pkt.writeUInt32BE(this.sourceId, 12)
-    // Match device's 0x8000 format from VPS capture:
-    // Device sends: param1=4, param2=2, sessionId, mtu=1500, window=32, version=1
-    pkt.writeUInt32BE(4, 16)          // param1 (matches device)
-    pkt.writeUInt32BE(2, 20)          // param2 (matches device)
-    pkt.writeUInt32BE(dataSessionId, 24)
-    pkt.writeUInt32BE(1500, 28)       // MTU
-    pkt.writeUInt32BE(0x20, 32)       // window size
-    pkt.writeUInt32BE(1, 36)          // version
-    pkt.writeUInt32BE(this.sourceId, 40)
-    // bytes 44-63: zeros
-
-    this.sendToDevice(pkt)
-  }
+  // sendConnectionControl replaced by SRT handshake (handleSrtInduction/handleSrtConclusion)
 
   // -- Keepalive (0x8001) --
 
@@ -824,22 +809,104 @@ export class P2PSession extends EventEmitter {
   }
 
   private handleConnectionControl(buf: Buffer): void {
-    if (buf.length < 32) return
+    if (buf.length < 64) return
 
-    // Log the full 0x8000 packet for protocol analysis
-    console.log(`[P2P] 0x8000 raw (${buf.length}B): ${buf.toString('hex')}`)
-    if (buf.length >= 52) {
-      console.log(`[P2P] 0x8000 fields: sessionId=0x${buf.readUInt32BE(24).toString(16)} sourceId=0x${buf.readUInt32BE(12).toString(16)} mtu=${buf.readUInt32BE(28)} window=${buf.readUInt32BE(32)}`)
+    // This is an SRT handshake packet (0x8000 = SRT control, type 0 = handshake)
+    // SRT header: 16 bytes (F+type, subtype, typeInfo, timestamp, destSocketId)
+    // SRT handshake body: 48 bytes starting at offset 16
+    const srtVersion = buf.readUInt32BE(16)
+    const srtExtension = buf.readUInt16BE(22)
+    const initSeq = buf.readUInt32BE(24)
+    const mtu = buf.readUInt32BE(28)
+    const window = buf.readUInt32BE(32)
+    const hsType = buf.readUInt32BE(36)
+    const peerSocketId = buf.readUInt32BE(40)
+    const synCookie = buf.readUInt32BE(44)
+
+    console.log(`[SRT] Handshake: version=${srtVersion} ext=${srtExtension} type=${hsType} socketId=0x${peerSocketId.toString(16)} cookie=0x${synCookie.toString(16)} mtu=${mtu} window=${window}`)
+
+    if (hsType === 1 && srtVersion === 4) {
+      // SRT INDUCTION handshake — respond with our induction response
+      this.handleSrtInduction(buf, peerSocketId, initSeq, mtu, window)
+      return
     }
 
-    // Extract data session ID from device's connection control
-    const proposedDataSession = buf.readUInt32BE(24)
-    if (proposedDataSession !== 0 && this.dataSessionId === 0) {
-      this.dataSessionId = proposedDataSession
-      // Respond with our own connection control
-      this.sendConnectionControl(proposedDataSession)
-      this.emit('dataSessionEstablished', proposedDataSession)
+    if (hsType === 0xFFFFFFFF) {
+      // SRT CONCLUSION handshake — connection established!
+      this.handleSrtConclusion(buf, peerSocketId)
+      return
     }
+
+    // For other handshake types, log and extract data session
+    console.log(`[SRT] Unhandled handshake type: ${hsType}`)
+    if (initSeq !== 0 && this.dataSessionId === 0) {
+      this.dataSessionId = initSeq
+      this.emit('dataSessionEstablished', initSeq)
+    }
+  }
+
+  private handleSrtInduction(buf: Buffer, peerSocketId: number, initSeq: number, mtu: number, window: number): void {
+    // Generate a SYN cookie based on peer info
+    const synCookie = (this.sourceId ^ peerSocketId ^ timestamp32()) >>> 0
+
+    // Build SRT induction response
+    const pkt = Buffer.alloc(64)
+    // SRT control header
+    pkt.writeUInt16BE(0x8000, 0)     // F=1, control type=0 (handshake)
+    pkt.writeUInt16BE(0, 2)          // subtype
+    pkt.writeUInt32BE(0, 4)          // type-specific info
+    pkt.writeUInt32BE(timestamp32(), 8) // timestamp
+    pkt.writeUInt32BE(peerSocketId, 12) // destination socket ID
+
+    // SRT handshake body
+    pkt.writeUInt32BE(5, 16)         // Version: 5 (SRT)
+    pkt.writeUInt16BE(0, 20)         // Encryption: none
+    pkt.writeUInt16BE(0x4a17, 22)    // Extension: SRT magic 0x4A17
+    pkt.writeUInt32BE(initSeq, 24)   // Initial sequence number (echo back)
+    pkt.writeUInt32BE(mtu, 28)       // MTU
+    pkt.writeUInt32BE(window, 32)    // Window
+    pkt.writeUInt32BE(1, 36)         // Handshake type: INDUCTION (response)
+    pkt.writeUInt32BE(this.sourceId, 40) // Our socket ID
+    pkt.writeUInt32BE(synCookie, 44) // SYN cookie
+
+    this.srtSynCookie = synCookie
+    this.srtPeerSocketId = peerSocketId
+
+    this.sendToDevice(pkt)
+    console.log(`[SRT] Sent induction response, cookie=0x${synCookie.toString(16)}, ourSocketId=0x${this.sourceId.toString(16)}`)
+  }
+
+  private handleSrtConclusion(buf: Buffer, peerSocketId: number): void {
+    console.log(`[SRT] CONCLUSION received — SRT connection established!`)
+
+    // The SRT connection is now established
+    // Set data session from the initial sequence number
+    const initSeq = buf.readUInt32BE(24)
+    if (this.dataSessionId === 0) {
+      this.dataSessionId = initSeq
+      this.emit('dataSessionEstablished', initSeq)
+    }
+
+    // Send our conclusion response
+    const pkt = Buffer.alloc(64)
+    pkt.writeUInt16BE(0x8000, 0)
+    pkt.writeUInt16BE(0, 2)
+    pkt.writeUInt32BE(0, 4)
+    pkt.writeUInt32BE(timestamp32(), 8)
+    pkt.writeUInt32BE(peerSocketId, 12)
+
+    pkt.writeUInt32BE(5, 16)         // Version: 5 (SRT)
+    pkt.writeUInt16BE(0, 20)         // Encryption: none
+    pkt.writeUInt16BE(0x4a17, 22)    // Extension: SRT magic
+    pkt.writeUInt32BE(initSeq, 24)   // Initial sequence number
+    pkt.writeUInt32BE(1500, 28)      // MTU
+    pkt.writeUInt32BE(32, 32)        // Window
+    pkt.writeUInt32BE(0xFFFFFFFF, 36) // Handshake type: CONCLUSION
+    pkt.writeUInt32BE(this.sourceId, 40) // Our socket ID
+    pkt.writeUInt32BE(this.srtSynCookie ?? 0, 44) // SYN cookie
+
+    this.sendToDevice(pkt)
+    console.log(`[SRT] Sent conclusion response`)
   }
 
   private handleDataPacket(buf: Buffer): void {
