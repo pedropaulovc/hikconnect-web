@@ -3,6 +3,7 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import { LiveStream } from '@/lib/p2p/live-stream'
 import { getAuthenticatedClient } from '@/lib/hikconnect/getClient'
+import { getPublicIp } from '@/lib/utils/public-ip'
 import { sessions } from '../sessions'
 
 /**
@@ -54,7 +55,7 @@ export async function POST(req: Request) {
       channelNo: channel,
       streamType: 0, // main stream for playback
       verificationCode,
-      localPublicIp: process.env.PUBLIC_IP,
+      localPublicIp: await getPublicIp(),
       busType: 2, // playback mode
       startTime,
       stopTime,
