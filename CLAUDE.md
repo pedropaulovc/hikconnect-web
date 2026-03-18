@@ -6,18 +6,34 @@ Web client for Hikvision NVRs/cameras that streams video via the Hik-Connect clo
 
 **Phase 1 (REST API client):** Complete. Login, devices, cameras, stream tickets, VTM info, relay config, recordings.
 
-**Phase 2 (protocol reverse engineering):** In progress. P2P server handshake works (SUCCESS response). Video not yet flowing — blocked on NAT traversal (P2P path) and ECDH handshake (VTM relay path).
+**Phase 2 (protocol reverse engineering):** Bidirectional P2P communication achieved. P2P_SETUP works, device responds with PREVIEW_RSP. Blocked on completing the PLAY_REQUEST → data session → video data pipeline.
 
-**Phase 3 (streaming + UI):** Skeleton built. LiveStream pipeline, FFmpeg HLS, web player all wired up. Needs a working P2P or VTM connection to deliver actual video.
+**Phase 3 (streaming + UI):** Skeleton built. LiveStream pipeline, FFmpeg HLS, web player all wired up. Needs the P2P data session to deliver actual video.
 
 ## Architecture
 
 ```
-Browser (Next.js) → API Routes → P2P/VTM Client → Device (via cloud)
+Browser (Next.js) → API Routes → P2P Session → Device (via P2P cloud)
                                         ↓
                                   FFmpeg → HLS segments
                                         ↓
                                   HLS.js player ← Browser
+```
+
+### P2P Connection Flow (reverse-engineered)
+
+```
+Client                    P2P Server (52.x:6000)      Device (NVR)
+  │                              │                        │
+  │── P2P_SETUP (0x0B02) ──────→│                        │
+  │←─ 0x0B03 (device info) ─────│                        │
+  │                              │── notify device ──────→│
+  │←─ 0x0C00 (PREVIEW_RSP) ─────────────────────────────│
+  │                              │                        │
+  │── TRANSFOR_DATA (0x0B04) ───→│── relay PLAY_REQ ────→│
+  │←─ 0x0B05 (SUCCESS) ─────────│                        │
+  │                              │                        │
+  │←════════════ video data (UDP P2P) ═══════════════════│
 ```
 
 ### Key Modules
@@ -26,7 +42,7 @@ Browser (Next.js) → API Routes → P2P/VTM Client → Device (via cloud)
 |--------|------|---------|
 | HikConnect API client | `src/lib/hikconnect/client.ts` | REST API: login, devices, tickets, P2P config |
 | V3 protocol codec | `src/lib/p2p/v3-protocol.ts` | Hikvision binary protocol: encode/decode, TLV, CRC-8 |
-| P2P session | `src/lib/p2p/p2p-session.ts` | UDP P2P: server handshake, hole punch, data exchange |
+| P2P session | `src/lib/p2p/p2p-session.ts` | UDP P2P: P2P_SETUP, PLAY_REQUEST, hole punch, data exchange |
 | VTM client | `src/lib/p2p/vtm-client.ts` | TCP VTM relay: protobuf framing, ECDH (incomplete) |
 | Device P2P framing | `src/lib/p2p/device-p2p.ts` | Device-side packet types: 7534/80xx/41ab |
 | IMKH parser | `src/lib/p2p/imkh-parser.ts` | Hikvision media container: frame extraction, AES decrypt |
@@ -71,16 +87,27 @@ npm test -- --run    # Run all tests (98 pass, 1 skipped)
 ### Protocol Testing
 
 ```bash
-npx tsx scripts/test-p2p-v2.ts      # Test P2P server handshake (needs .env.local)
-npx tsx scripts/test-vtm-connect.ts  # Test VTM relay connection
-npx tsx scripts/test-p2p-connect.ts  # Basic P2P connection test
+npx tsx scripts/test-p2p-dynamic.ts     # Full P2P test: login → P2P_SETUP → PLAY_REQUEST (needs VPS with public IP)
+npx tsx scripts/test-p2p-v2.ts          # Legacy P2P server handshake test
+npx tsx scripts/test-vtm-connect.ts     # Test VTM relay connection
+```
+
+### VPS for P2P Testing
+
+```bash
+hcloud server create --name hikp2p --type cpx11 --location ash --image ubuntu-24.04 --ssh-key hikconnect
+# Deploy: rsync -az --exclude node_modules --exclude .next --exclude .git . root@IP:/root/hikconnect-web/
+# Install: ssh root@IP 'curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && apt-get install -y nodejs'
+# Test: ssh root@IP 'cd /root/hikconnect-web && npm install && npx tsx scripts/test-p2p-dynamic.ts'
+# Cleanup: hcloud server delete hikp2p
 ```
 
 ### Frida (Android emulator)
 
 ```bash
-frida -U -p <PID> -l scripts/frida/get-p2p-key.js    # Capture P2PServerKey
-frida -U -p <PID> -l scripts/frida/hook-stream-broad.js  # Broad network hooks
+frida -U -p <PID> -l scripts/frida/get-p2p-key.js        # Capture P2PServerKey
+frida -U -p <PID> -l scripts/frida/get-p2p-link-key.js   # Capture P2PLinkKey + all InitParam fields
+frida -U -p <PID> -l scripts/frida/hook-stream-broad.js   # Broad network hooks
 ```
 
 ## Environment
@@ -98,17 +125,22 @@ All protocol documentation lives in `docs/re/`:
 
 | File | Content |
 |------|---------|
-| `protocol-notes.md` | **Primary reference.** Complete P2P + VTM protocol spec: packet formats, keys, ECDH handshake, error codes |
+| `protocol-notes.md` | **Primary reference.** Complete P2P + VTM protocol spec: packet formats, keys, encryption, ECDH |
 | `deferred-work.md` | Outstanding work items with priority and status |
 | `api-notes.md` | API response shapes, P2P config injection model |
 | `v3-protocol-opcodes.md` | V3 binary protocol opcode table |
 | `crypto-analysis.md` | Crypto algorithms from Ghidra RE |
 | `cas-broker-protocol.md` | CAS TCP broker protocol |
+| `cas-session-flow.md` | Full CAS session establishment sequence (STUN → P2P_SETUP → stream) |
 | `stun-p2p-protocol.md` | STUN and P2P server protocol |
+| `p2p-config-source.md` | Where each config element comes from (JNI → native mapping) |
+| `jni-exports.md` | JNI function signatures and InitParam field mapping |
 
 ### Key Protocol Constants
 
 - **P2PServerKey:** `e4465f2d011ebf9d85eb32d46e1549bdf64c171d616a132afaba4b4d348a39d5` (stable per account, from Frida)
+- **P2PLinkKey:** first 32 ASCII chars of API KMS `secretKey` (from Frida `szP2PLinkKey`)
+- **AES IV (all V3 encryption):** `"01234567" + 8 zero bytes` (0x30313233343536370000000000000000)
 - **CRC-8:** Custom Hikvision bitwise algorithm (NOT polynomial 0x39). See `v3-protocol.ts`.
 - **V3 reserved field:** `0x6234` (protocol version constant in all V3 headers)
 - **P2P servers:** `52.5.124.127:6000`, `52.203.168.207:6000`
