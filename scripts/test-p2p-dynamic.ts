@@ -89,9 +89,16 @@ async function main() {
     if (dataCount <= 20 || dataCount % 200 === 0) {
       console.log(`[DATA] #${dataCount} ${payload.length}B total=${totalDataBytes}B type=0x${payload.readUInt16BE(0).toString(16)} first32=${payload.subarray(0, Math.min(32, payload.length)).toString('hex')}`)
     }
-    // Save first 50 packets for analysis
+    // Save first 50 packets and concatenated stream
     if (dataCount <= 50) {
       fs.writeFileSync(`${captureDir}/pkt-${String(dataCount).padStart(4, '0')}.bin`, payload)
+    }
+    // Strip Hik-RTP header (12 bytes for 0x8060, keep full for 0x0100)
+    const hikRtpType = payload.readUInt16BE(0)
+    if (hikRtpType === 0x8060 || hikRtpType === 0x8050 || hikRtpType === 0x8051) {
+      fs.appendFileSync(`${captureDir}/stream-raw.bin`, payload.subarray(12))
+    } else {
+      fs.appendFileSync(`${captureDir}/stream-raw.bin`, payload)
     }
   })
   p2pSession.on('v3message', (msg: { msgType: number; seqNum: number; reserved: number; mask: { encrypt: boolean }; attributes: { tag: number; value: Buffer }[] }) => {
