@@ -63,8 +63,8 @@ async function main() {
     localPublicIp: process.env.PUBLIC_IP || await getPublicIp(),
   })
 
-  // Hik-RTP extractor: strips headers, decrypts, emits H.265 NALs
-  const extractor = new HikRtpExtractor('ABCDEF')
+  // Hik-RTP extractor: strips headers, emits H.265 NALs
+  const extractor = new HikRtpExtractor()
 
   // HLS output directory
   const hlsDir = '/tmp/hls-output'
