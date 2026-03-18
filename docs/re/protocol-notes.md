@@ -225,6 +225,25 @@ From `CP2PV3Client::BuildMsg` / `BuildTransMsg`:
 - Returns key + 2 version bytes (`local_38` and `local_37`)
 - Error "P2PServer KeyInfo is invalid, maybe not init KEYINFO" if both version bytes are -1
 
+##### StartStream Flow (CP2PV3Client::StartStream)
+
+The high-level `StartStream` function in the native code:
+1. Calls `srt_setrecvavail` to configure SRT on the punched socket
+2. Parses P2P server group from config
+3. Calls `BuildAndSendPlayRequest` (0x0C02) — this IS the stream start
+4. For voice talk (busType=3): additionally sets up SRT session via `FUN_18008a6a0`/`FUN_18008a090`
+5. On success: logs "StartStream success" with devSession, streamSession
+
+**Key finding:** There is NO separate 0x7534/0x8000 session setup step in the P2P V3 path.
+The 0x7534 (SESSION_SETUP) and 0x8000 (CONNECTION_CONTROL) packets are part of the
+SRT/UDT transport layer, handled internally by srt.dll — NOT by the P2P protocol.
+The PLAY_REQUEST response directly triggers video data flow.
+
+**Implication for our code:** Our `sendSessionSetup()` that sends 0x7534 with embedded V3 0x0C00
+may be incorrect for the P2P V3 path. After PLAY_REQUEST succeeds, the device should start
+sending video data directly (possibly wrapped in SRT or raw UDP). The 0x7534/0x8000 packets
+we see in captures may be SRT session establishment that the SRT library handles automatically.
+
 ##### Key API Endpoints (from OpenNetStream.dll strings)
 
 ```

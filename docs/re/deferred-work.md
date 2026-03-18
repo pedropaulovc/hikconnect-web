@@ -21,7 +21,7 @@ type: project
    - Response can come from either path
    - **Action:** Send PLAY_REQUEST directly to device IP:port from the 0x0C00 packet, using the same socket. Also send via TRANSFOR_DATA as fallback. Note: native code uses SRT (srt.dll) for the direct path, but raw UDP may work for initial testing.
 
-3. **Data session establishment (0x7534 + 0x8000)** — After PLAY_REQUEST succeeds, exchange session setup (0x7534) and connection control (0x8000) packets with the device to establish the data channel.
+3. **Data session may not need 0x7534/0x8000** — From iVMS-4200 RE, `StartStream` directly calls `BuildAndSendPlayRequest` with NO separate 0x7534/0x8000 step. Those packets are SRT/UDT transport layer (handled by srt.dll internally). After PLAY_REQUEST succeeds, video data should flow directly. Our `sendSessionSetup()` may be unnecessary or even harmful for the V3 path. **Test:** after fixing punch + PLAY_REQUEST, check if data flows without 0x7534.
 
 4. **Video data reception** — Receive data packets (0x41ab type), reassemble fragments, pipe through IMKH parser → FFmpeg → HLS.
 
