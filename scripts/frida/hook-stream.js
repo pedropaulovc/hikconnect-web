@@ -25,17 +25,30 @@ function dumpHex(buf, maxLen) {
 
 var interestingFds = {};
 
+function findExport(lib, func) {
+    if (lib) {
+        var mod = Process.findModuleByName(lib);
+        return mod ? mod.findExportByName(func) : null;
+    }
+    // Search all modules
+    var mods = Process.enumerateModules();
+    for (var i = 0; i < mods.length; i++) {
+        var ptr = mods[i].findExportByName(func);
+        if (ptr) return ptr;
+    }
+    return null;
+}
+
 function tryHook(lib, func, callbacks) {
     try {
-        var ptr = Module.findExportByName(lib, func);
+        var ptr = findExport(lib, func);
         if (ptr) {
             Interceptor.attach(ptr, callbacks);
-            console.log("[*] Hooked " + func + " in " + lib);
+            console.log("[*] Hooked " + func + (lib ? " in " + lib : ""));
             return true;
-        } else {
-            console.log("[!] " + func + " not found in " + lib);
-            return false;
         }
+        console.log("[!] " + func + " not found" + (lib ? " in " + lib : ""));
+        return false;
     } catch(e) {
         console.log("[!] Failed to hook " + func + ": " + e);
         return false;
@@ -43,7 +56,7 @@ function tryHook(lib, func, callbacks) {
 }
 
 // HOOK: connect()
-tryHook("libc.so", "connect", {
+tryHook(null, "connect", {
     onEnter: function(args) {
         try {
             var addr = args[1];
@@ -68,7 +81,7 @@ tryHook("libc.so", "connect", {
 });
 
 // HOOK: sendto() — often used instead of send()
-tryHook("libc.so", "sendto", {
+tryHook(null, "sendto", {
     onEnter: function(args) {
         this.fd = args[0].toInt32();
         this.buf = args[1];
@@ -84,7 +97,7 @@ tryHook("libc.so", "sendto", {
 });
 
 // HOOK: send()
-tryHook("libc.so", "send", {
+tryHook(null, "send", {
     onEnter: function(args) {
         this.fd = args[0].toInt32();
         this.buf = args[1];
@@ -100,7 +113,7 @@ tryHook("libc.so", "send", {
 });
 
 // HOOK: recvfrom()
-tryHook("libc.so", "recvfrom", {
+tryHook(null, "recvfrom", {
     onEnter: function(args) {
         this.fd = args[0].toInt32();
         this.buf = args[1];
@@ -115,7 +128,7 @@ tryHook("libc.so", "recvfrom", {
 });
 
 // HOOK: recv()
-tryHook("libc.so", "recv", {
+tryHook(null, "recv", {
     onEnter: function(args) {
         this.fd = args[0].toInt32();
         this.buf = args[1];
@@ -130,7 +143,7 @@ tryHook("libc.so", "recv", {
 });
 
 // HOOK: write() for non-file fds
-tryHook("libc.so", "write", {
+tryHook(null, "write", {
     onEnter: function(args) {
         this.fd = args[0].toInt32();
         this.buf = args[1];
@@ -146,7 +159,7 @@ tryHook("libc.so", "write", {
 });
 
 // HOOK: read()
-tryHook("libc.so", "read", {
+tryHook(null, "read", {
     onEnter: function(args) {
         this.fd = args[0].toInt32();
         this.buf = args[1];
@@ -163,7 +176,7 @@ tryHook("libc.so", "read", {
 // Enumerate libezstreamclient exports after delay
 setTimeout(function() {
     try {
-        var mod = Process.findModuleByName("libezstreamclient.so");
+        var mod = Process.findModuleByName("libezstreamclient.so") || Process.findModuleByName("libStreamClient.so");
         if (mod) {
             console.log("\n[*] libezstreamclient.so at " + mod.base + " (" + mod.size + " bytes)");
             var exports = mod.enumerateExports();

@@ -1,12 +1,18 @@
 import { NextResponse } from 'next/server'
-import { StreamSession } from '@/lib/p2p/stream-session'
 import { join } from 'path'
 import { tmpdir } from 'os'
+import { LiveStream } from '@/lib/p2p/live-stream'
+import { getAuthenticatedClient } from '@/lib/hikconnect/getClient'
 import { sessions } from '../sessions'
 
 export async function POST(req: Request) {
   const body = await req.json()
-  const { deviceSerial, channel = 1, streamType = 1 } = body
+  const {
+    deviceSerial,
+    channel = 1,
+    streamType = 1,
+    verificationCode = 'ABCDEF',
+  } = body
 
   if (!deviceSerial || typeof deviceSerial !== 'string') {
     return NextResponse.json({ error: 'deviceSerial is required' }, { status: 400 })
@@ -15,38 +21,50 @@ export async function POST(req: Request) {
   const sessionId = `${deviceSerial}-${channel}-${Date.now()}`
   const hlsDir = join(tmpdir(), 'hls', sessionId)
 
-  const session = new StreamSession({
-    stunHost: '43.130.155.63',
-    stunPort: 6002,
-    cas: {
-      host: '34.194.209.167',
-      port: 6500,
-    },
-    play: {
-      busType: 1,           // 1 = live preview
-      sessionKey: '',       // TODO: pull from HikConnect auth session
-      streamType,           // 0 = main, 1 = sub
-      channelNo: channel,
-      streamSession: Date.now(),
-    },
-    hls: {
-      outputDir: hlsDir,
-      segmentDuration: 2,
-    },
-  })
-
-  sessions.set(sessionId, session)
-
   try {
-    await session.start()
+    // Get P2P config from API
+    const client = getAuthenticatedClient()
+    const p2pConfig = await client.getP2PConfig(deviceSerial)
+
+    // Parse P2P key from hex-encoded secret key
+    const p2pKey = Buffer.from(p2pConfig.secretKey, 'hex')
+
+    const stream = new LiveStream({
+      deviceSerial,
+      deviceIp: p2pConfig.connection.netIp || p2pConfig.connection.wanIp,
+      devicePort: p2pConfig.connection.netStreamPort || 9020,
+      p2pServers: p2pConfig.servers.map(s => ({ host: s.ip, port: s.port })),
+      p2pKey,
+      p2pKeySaltIndex: 3,
+      p2pKeySaltVer: 1,
+      sessionToken: client.getSession()!.sessionId,
+      userId: '', // TODO: extract from session JWT
+      channelNo: channel,
+      streamType,
+      verificationCode,
+      hls: {
+        outputDir: hlsDir,
+        segmentDuration: 2,
+      },
+    })
+
+    sessions.set(sessionId, stream)
+
+    stream.on('stateChange', ({ to }: { from: string; to: string }) => {
+      if (to === 'stopped' || to === 'error') {
+        sessions.delete(sessionId)
+      }
+    })
+
+    await stream.start()
+
+    return NextResponse.json({
+      sessionId,
+      playlistUrl: `/api/stream/${sessionId}/stream.m3u8`,
+    })
   } catch (err) {
     sessions.delete(sessionId)
     const message = err instanceof Error ? err.message : 'Unknown error'
     return NextResponse.json({ error: message }, { status: 500 })
   }
-
-  return NextResponse.json({
-    sessionId,
-    playlistUrl: `/api/stream/${sessionId}/stream.m3u8`,
-  })
 }

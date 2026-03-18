@@ -26,7 +26,7 @@ async function main() {
   // Step 1: Login
   console.log('=== Step 1: HikConnect Login ===')
   const client = new HikConnectClient({ baseUrl: 'https://api.hik-connect.com' })
-  const session = await client.login({ account, password })
+  const session = await client.login({ account: account!, password: password! })
   console.log('Session ID:', session.sessionId.substring(0, 20) + '...')
   console.log('API domain:', session.apiDomain)
 

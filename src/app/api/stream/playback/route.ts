@@ -1,0 +1,78 @@
+import { NextResponse } from 'next/server'
+import { join } from 'path'
+import { tmpdir } from 'os'
+import { LiveStream } from '@/lib/p2p/live-stream'
+import { getAuthenticatedClient } from '@/lib/hikconnect/getClient'
+import { sessions } from '../sessions'
+
+/**
+ * POST /api/stream/playback
+ * Start a playback stream for a specific recording time range.
+ */
+export async function POST(req: Request) {
+  const body = await req.json()
+  const {
+    deviceSerial,
+    channel = 1,
+    verificationCode = 'ABCDEF',
+    startTime,
+    stopTime,
+  } = body
+
+  if (!deviceSerial) {
+    return NextResponse.json({ error: 'deviceSerial is required' }, { status: 400 })
+  }
+
+  if (!startTime || !stopTime) {
+    return NextResponse.json({ error: 'startTime and stopTime are required' }, { status: 400 })
+  }
+
+  const sessionId = `pb-${deviceSerial}-${channel}-${Date.now()}`
+  const hlsDir = join(tmpdir(), 'hls', sessionId)
+
+  try {
+    const client = getAuthenticatedClient()
+    const p2pConfig = await client.getP2PConfig(deviceSerial)
+    const p2pKey = Buffer.from(p2pConfig.secretKey, 'hex')
+
+    // For playback, we use streamType=0 (main stream) and busType would be 2
+    // The P2P session needs to send a playback request instead of preview
+    const stream = new LiveStream({
+      deviceSerial,
+      deviceIp: p2pConfig.connection.netIp || p2pConfig.connection.wanIp,
+      devicePort: p2pConfig.connection.netStreamPort || 9020,
+      p2pServers: p2pConfig.servers.map(s => ({ host: s.ip, port: s.port })),
+      p2pKey,
+      p2pKeySaltIndex: 3,
+      p2pKeySaltVer: 1,
+      sessionToken: client.getSession()!.sessionId,
+      userId: '',
+      channelNo: channel,
+      streamType: 0, // main stream for playback
+      verificationCode,
+      hls: {
+        outputDir: hlsDir,
+        segmentDuration: 4,
+      },
+    })
+
+    sessions.set(sessionId, stream)
+
+    stream.on('stateChange', ({ to }: { from: string; to: string }) => {
+      if (to === 'stopped' || to === 'error') {
+        sessions.delete(sessionId)
+      }
+    })
+
+    await stream.start()
+
+    return NextResponse.json({
+      sessionId,
+      playlistUrl: `/api/stream/${sessionId}/stream.m3u8`,
+    })
+  } catch (err) {
+    sessions.delete(sessionId)
+    const message = err instanceof Error ? err.message : 'Unknown error'
+    return NextResponse.json({ error: message }, { status: 500 })
+  }
+}
