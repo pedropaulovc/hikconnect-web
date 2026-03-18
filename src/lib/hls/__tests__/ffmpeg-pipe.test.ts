@@ -17,8 +17,10 @@ describe('FFmpeg HLS pipe', () => {
     expect(pipe).toBeDefined()
   })
 
-  it('throws when writing before start', () => {
+  it('buffers data before FFmpeg starts', () => {
     const pipe = new FfmpegHlsPipe({ outputDir: '/tmp/hls-test' })
-    expect(() => pipe.write(Buffer.from('test'))).toThrow('FFmpeg not running')
+    pipe.start()
+    // write() should buffer data without throwing (FFmpeg starts after 200KB)
+    expect(() => pipe.write(Buffer.from('test'))).not.toThrow()
   })
 })
