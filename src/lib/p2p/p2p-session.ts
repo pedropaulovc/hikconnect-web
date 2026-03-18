@@ -121,17 +121,17 @@ export class P2PSession extends EventEmitter {
     await this.contactP2PServers()
 
     // Step 2: After punch completes, send PLAY_REQUEST
+    this.transition('setup')
     await this.sendPlayRequest()
 
-    // Step 3: Send session setup to device
-    this.transition('setup')
-    this.sendSessionSetup()
-
-    // Step 4: Start keepalive timer
+    // Step 3: Start keepalive timer (device expects periodic keepalives)
     this.keepaliveInterval = setInterval(() => this.sendKeepalive(), 15_000)
 
-    // Wait for data session to establish (or timeout)
-    await this.waitForDataSession(10_000)
+    // Step 4: Wait for data to start flowing
+    // From iVMS-4200 RE: StartStream calls BuildAndSendPlayRequest directly.
+    // No separate 0x7534/0x8000 session setup — those are SRT/UDT layer packets.
+    // After PLAY_REQUEST succeeds, video data should flow via the P2P connection.
+    await this.waitForDataSession(15_000)
     this.transition('streaming')
   }
 
