@@ -12,7 +12,6 @@ export async function POST(req: Request) {
     deviceSerial,
     channel = 1,
     streamType = 1,
-    verificationCode = 'ABCDEF',
   } = body
 
   if (!deviceSerial || typeof deviceSerial !== 'string') {
@@ -46,7 +45,6 @@ export async function POST(req: Request) {
       clientId: 0x0aed13f5, // TODO: fetch from API
       channelNo: channel,
       streamType,
-      verificationCode,
       localPublicIp: await getPublicIp(),
       hls: {
         outputDir: hlsDir,

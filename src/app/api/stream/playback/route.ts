@@ -15,7 +15,6 @@ export async function POST(req: Request) {
   const {
     deviceSerial,
     channel = 1,
-    verificationCode = 'ABCDEF',
     startTime,
     stopTime,
   } = body
@@ -54,7 +53,6 @@ export async function POST(req: Request) {
       clientId: 0x0aed13f5, // TODO: fetch from API
       channelNo: channel,
       streamType: 0, // main stream for playback
-      verificationCode,
       localPublicIp: await getPublicIp(),
       busType: 2, // playback mode
       startTime,

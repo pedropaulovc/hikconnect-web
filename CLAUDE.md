@@ -8,12 +8,12 @@ Web client for Hikvision NVRs/cameras that streams video via the Hik-Connect clo
 
 **Phase 2 (protocol reverse engineering):** Complete. Full P2P streaming pipeline reverse-engineered from iVMS-4200 (Ghidra) and verified on VPS. P2P_SETUP → hole-punch → SRT → H.265 video data flowing.
 
-**Phase 3 (streaming + UI):** Pipeline functional. 343 H.265 frames decoded (4K), 9 HLS segments generated. Blocked on device verification code for AES decryption of video slices.
+**Phase 3 (streaming + UI):** Pipeline produces HLS segments from P2P video data. FFmpeg detects HEVC Main 3840x2160 from VPS/SPS/PPS. **Visual verification of actual video content still pending** — FFmpeg can produce .ts files from garbled data too.
 
 **Next steps:**
-1. Get the NVR verification code (6-char code from device sticker or Hik-Connect app → Device Settings)
-2. Update `HikRtpExtractor` with correct AES-128-ECB decryption using `MD5(verificationCode)`
-3. Run `./scripts/test-full-pipeline.sh` on VPS for end-to-end browser playback
+1. Deploy to VPS and visually verify .ts segment content (does it show a real camera image?)
+2. If corrupted: investigate whether video slices need decryption with a session-derived key (not verification code — iVMS/Android stream without it)
+3. If playable: end-to-end browser playback confirmed, move to production hardening
 
 ## Architecture
 

@@ -4,10 +4,14 @@
  * Format (from VPS capture analysis):
  * - SRT data payload starts with 12-byte Hik-RTP header
  * - After header: 13-byte sub-frame header (0x0d + 4B + sync pattern a7 6d 4e 7e 55 66 77 88)
- * - After sub-header: NAL unit data
- *   - VPS/SPS/PPS (NAL types 32-34): plaintext
- *   - Slice data: AES-128-ECB encrypted with MD5(verificationCode)
+ * - After sub-header: NAL unit data (plaintext)
+ *   - VPS/SPS/PPS (NAL types 32-34): parameter sets
+ *   - Slice data (NAL types 0-21): video frames
  *   - Length-prefixed frames (0x00 0x01/0x02 + 2B length): SPS info
+ *
+ * Video data is plaintext by default. AES encryption only applies when
+ * "stream encryption" is explicitly enabled in device settings (optional NVR feature).
+ * iVMS-4200 and Hik-Connect mobile apps stream without any verification code.
  */
 
 import { EventEmitter } from 'node:events'
@@ -19,11 +23,6 @@ const ANNEX_B_START_CODE = Buffer.from([0x00, 0x00, 0x00, 0x01])
 
 export class HikRtpExtractor extends EventEmitter {
   private nalCount = 0
-
-  constructor(_verificationCode?: string) {
-    super()
-    // Verification code reserved for future AES decryption of encrypted streams
-  }
 
   /**
    * Process a raw SRT data payload (the 'data' event from P2PSession).

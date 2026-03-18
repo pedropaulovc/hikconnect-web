@@ -1,8 +1,8 @@
 /**
  * LiveStream — end-to-end live streaming from device to HLS.
  *
- * Connects via P2P to the device, receives encrypted video data,
- * decrypts and demuxes IMKH frames, pipes raw H.264/H.265 to FFmpeg
+ * Connects via P2P to the device, receives video data,
+ * extracts H.265 NAL units via Hik-RTP framing, pipes to FFmpeg
  * for HLS segmentation.
  */
 
@@ -48,8 +48,6 @@ export type LiveStreamConfig = {
   startTime?: string
   /** Playback stop time (YYYY-MM-DDTHH:MM:SS) */
   stopTime?: string
-  /** Device verification code (6 chars, used for AES decryption) */
-  verificationCode: string
   /** HLS output configuration */
   hls: HlsConfig
 }
@@ -112,7 +110,7 @@ export class LiveStream extends EventEmitter {
       })
 
       // Wire P2P data → HikRTP extractor → H.265 NALs → FFmpeg
-      const extractor = new HikRtpExtractor(this.config.verificationCode)
+      const extractor = new HikRtpExtractor()
       extractor.on('nalUnit', (nal: Buffer) => {
         this.bytesReceived += nal.length
         this.hlsPipe?.write(nal)
