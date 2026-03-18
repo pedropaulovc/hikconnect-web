@@ -20,8 +20,9 @@ const ANNEX_B_START_CODE = Buffer.from([0x00, 0x00, 0x00, 0x01])
 
 export class HikRtpExtractor extends EventEmitter {
   private aesKey: Buffer
-  private initialized = false
   private nalCount = 0
+  private fragmentBuffer: Buffer[] = []
+  private inFragment = false
 
   constructor(verificationCode: string) {
     super()
@@ -45,17 +46,21 @@ export class HikRtpExtractor extends EventEmitter {
     const rtpPayload = payload.subarray(HIK_RTP_HEADER_LEN)
 
     // Strip 13-byte Hik-RTP sub-header (starts with 0x0d)
-    // Sub-header: 0x0d + 4 variable bytes + 8-byte session sync pattern
-    if (rtpPayload[0] === 0x0d && rtpPayload.length > SUB_HEADER_LEN) {
-      const nalData = rtpPayload.subarray(SUB_HEADER_LEN)
+    if (rtpPayload[0] !== 0x0d || rtpPayload.length <= SUB_HEADER_LEN) return
 
-      if (this.nalCount < 5) {
-        const nalType = nalData.length > 0 ? (nalData[0] >> 1) & 0x3f : -1
-        console.log(`[HikRTP] nalType=${nalType} size=${nalData.length}B first8=${nalData.subarray(0, Math.min(8, nalData.length)).toString('hex')}`)
-      }
+    const subType = rtpPayload[1] // 0x90=first, 0x80=middle, 0xa0=last fragment
+    const nalData = rtpPayload.subarray(SUB_HEADER_LEN)
 
-      this.processNalUnit(nalData)
-    }
+    // Fragment reassembly based on sub-type byte:
+    // 0x90: first fragment of a frame (may also be complete if only one packet)
+    // 0x80: middle fragment (continuation)
+    // 0xa0: last fragment
+    // 0xd0: standalone single-packet frame?
+
+    // Each sub-frame's data may contain one or more NAL units.
+    // Don't try fragment reassembly — just pass each packet's data through.
+    // The H.265 Annex B start codes in processNalUnit will handle framing.
+    this.processNalUnit(nalData)
   }
 
   private processInitPacket(payload: Buffer): void {
@@ -75,7 +80,6 @@ export class HikRtpExtractor extends EventEmitter {
         this.processNalUnit(nalData)
       }
     }
-    this.initialized = true
   }
 
   private processNalUnit(data: Buffer): void {
@@ -99,27 +103,33 @@ export class HikRtpExtractor extends EventEmitter {
       return
     }
 
-    // The slice data might or might not be encrypted depending on the stream type.
-    // For sub-stream (streamType=1), try without decryption first.
-    // If that fails, try AES-128-ECB partial decryption.
+    // Encrypted slice data — AES-128-ECB decrypt first block only (partial encryption)
+    // Hikvision uses partial encryption: first 16 bytes of each slice
+    if (data.length >= 16) {
+      const decrypted = this.decryptSlice(data)
+      const decNalType = (decrypted[0] >> 1) & 0x3f
+      // If decrypted NAL type is valid H.265 (0-40), use decrypted data
+      if (decNalType <= 40) {
+        this.emitNal(decrypted)
+        return
+      }
+    }
+    // Not encrypted or decryption didn't help — emit raw
     this.emitNal(data)
   }
 
   private decryptSlice(data: Buffer): Buffer {
-    // Hikvision uses partial encryption: only the first 16 bytes of each slice
-    // This preserves the NAL unit structure while making the content unreadable
+    // Full AES-128-ECB decryption of all complete 16-byte blocks
     const blockSize = 16
     if (data.length < blockSize) return data
 
+    const fullBlocks = Math.floor(data.length / blockSize) * blockSize
     const decipher = createDecipheriv('aes-128-ecb', this.aesKey, null)
     decipher.setAutoPadding(false)
-    const decryptedFirst = decipher.update(data.subarray(0, blockSize))
+    const decrypted = decipher.update(data.subarray(0, fullBlocks))
 
-    if (data.length === blockSize) {
-      return decryptedFirst
-    }
-
-    return Buffer.concat([decryptedFirst, data.subarray(blockSize)])
+    if (fullBlocks === data.length) return decrypted
+    return Buffer.concat([decrypted, data.subarray(fullBlocks)])
   }
 
   private emitNal(data: Buffer): void {
