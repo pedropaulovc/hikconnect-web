@@ -149,6 +149,7 @@ export class P2PSession extends EventEmitter {
   stop(): void {
     if (this.state === 'stopped') return
 
+    this.stopSrtAckTimer()
     if (this.keepaliveInterval) {
       clearInterval(this.keepaliveInterval)
       this.keepaliveInterval = null
@@ -679,8 +680,13 @@ export class P2PSession extends EventEmitter {
       return
     }
 
-    // SRT ACK (0x8002) or SRT light ACK (0x8005/0x8006) — respond to keep flow
+    // SRT ACK (0x8002), light ACK (0x8005), ACK2 (0x8006) — no action needed
     if (type === 0x8002 || type === 0x8005 || type === 0x8006) {
+      return
+    }
+
+    // SRT NAK (0x8003) — device requesting retransmission (we can't retransmit, just log)
+    if (type === 0x8003) {
       return
     }
 
@@ -941,7 +947,25 @@ export class P2PSession extends EventEmitter {
   private srtTotalBytes = 0
 
   private lastAckSeq = 0
-  private lastAckTime = 0
+  private srtAckInterval: ReturnType<typeof setInterval> | null = null
+  private srtAckNumber = 1
+
+  private startSrtAckTimer(): void {
+    if (this.srtAckInterval) return
+    // SRT spec: ACK every 10ms
+    this.srtAckInterval = setInterval(() => {
+      if (this.lastAckSeq > 0) {
+        this.sendSrtAck(this.lastAckSeq)
+      }
+    }, 10)
+  }
+
+  private stopSrtAckTimer(): void {
+    if (this.srtAckInterval) {
+      clearInterval(this.srtAckInterval)
+      this.srtAckInterval = null
+    }
+  }
 
   private handleSrtDataPacket(buf: Buffer): void {
     // SRT data packet format (16-byte header + payload):
@@ -960,34 +984,34 @@ export class P2PSession extends EventEmitter {
       console.log(`[SRT-DATA] #${this.srtDataCount} seq=${seqNum} payload=${payload.length}B total=${this.srtTotalBytes}B first16=${payload.subarray(0, Math.min(16, payload.length)).toString('hex')}`)
     }
 
+    // Track highest received sequence for ACK timer
+    this.lastAckSeq = seqNum
+
+    // Start the ACK timer on first data packet
+    this.startSrtAckTimer()
+
     // Emit the payload for processing
     this.emit('data', payload)
-
-    // Send SRT ACK periodically (every 10ms or 10 packets, whichever is sooner)
-    const now = Date.now()
-    if (now - this.lastAckTime >= 10 || this.srtDataCount % 10 === 0) {
-      this.sendSrtAck(seqNum)
-      this.lastAckSeq = seqNum
-      this.lastAckTime = now
-    }
   }
 
-  private sendSrtAck(ackSeqNum: number): void {
+  private sendSrtAck(lastRecvSeq: number): void {
     // SRT ACK control packet (type=2)
-    const pkt = Buffer.alloc(40)
+    // From SRT spec: ACK informs sender about received data
+    const pkt = Buffer.alloc(44) // Full ACK with 7 fields (28 bytes of ACK data)
     pkt.writeUInt16BE(0x8002, 0) // F=1, control type=2 (ACK)
     pkt.writeUInt16BE(0, 2)      // subtype
-    pkt.writeUInt32BE(ackSeqNum, 4) // ACK sequence number
+    pkt.writeUInt32BE(this.srtAckNumber++, 4) // ACK number (increments each ACK)
     pkt.writeUInt32BE(timestamp32(), 8) // timestamp
     pkt.writeUInt32BE(this.srtPeerSocketId ?? 0, 12) // dest socket ID
 
-    // ACK data: last ACK'd sequence
-    pkt.writeUInt32BE(ackSeqNum + 1, 16) // Last ACK'd Packet Sequence Number + 1
-    pkt.writeUInt32BE(100, 20)   // RTT (microseconds, estimate)
-    pkt.writeUInt32BE(10, 24)    // RTT variance
-    pkt.writeUInt32BE(1000, 28)  // Available buffer size
-    pkt.writeUInt32BE(0, 32)     // Packets receiving rate
-    pkt.writeUInt32BE(0, 36)     // Estimated link capacity
+    // ACK data (from SRT spec section 3.2.2):
+    pkt.writeUInt32BE((lastRecvSeq + 1) & 0x7fffffff, 16) // Last ACK'd seq + 1
+    pkt.writeUInt32BE(8000, 20)  // RTT (microseconds) — reasonable estimate
+    pkt.writeUInt32BE(1000, 24)  // RTT variance (microseconds)
+    pkt.writeUInt32BE(8192, 28)  // Available buffer size (packets)
+    pkt.writeUInt32BE(1000, 32)  // Packets receiving rate (per second)
+    pkt.writeUInt32BE(100000, 36) // Estimated link capacity (packets/s)
+    pkt.writeUInt32BE(0, 40)     // Receiving rate (bytes/s) — optional
 
     this.sendToDevice(pkt)
   }
