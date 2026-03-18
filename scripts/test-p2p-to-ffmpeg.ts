@@ -3,7 +3,7 @@
  *
  * Usage: PUBLIC_IP=x.x.x.x npx tsx scripts/test-p2p-to-ffmpeg.ts
  */
-import { readFileSync, mkdirSync, existsSync } from 'fs'
+import { readFileSync, mkdirSync, existsSync, createWriteStream } from 'fs'
 const envFile = readFileSync('.env.local', 'utf-8')
 for (const line of envFile.split('\n')) {
   const match = line.match(/^(\w+)=["']?(.+?)["']?$/)
@@ -70,6 +70,9 @@ async function main() {
   const hlsDir = '/tmp/hls-output'
   mkdirSync(hlsDir, { recursive: true })
 
+  // Raw SRT packet dump for debugging
+  const rawDump = createWriteStream('/tmp/raw-srt-packets.bin')
+
   // Start FFmpeg: input raw H.265 via stdin → HLS output
   const ffmpeg = spawn('ffmpeg', [
     '-f', 'hevc',
@@ -77,8 +80,7 @@ async function main() {
     '-c:v', 'copy',    // Don't re-encode, just remux
     '-f', 'hls',
     '-hls_time', '2',
-    '-hls_list_size', '5',
-    '-hls_flags', 'delete_segments',
+    '-hls_list_size', '0',  // keep ALL segments
     `${hlsDir}/stream.m3u8`,
   ], { stdio: ['pipe', 'pipe', 'pipe'] })
 
@@ -98,8 +100,13 @@ async function main() {
     }
   })
 
-  // Wire P2P data → extractor
+  // Wire P2P data → extractor (with raw dump for debugging)
   p2pSession.on('data', (payload: Buffer) => {
+    // Write length-prefixed raw packet for later analysis
+    const lenBuf = Buffer.alloc(4)
+    lenBuf.writeUInt32BE(payload.length, 0)
+    rawDump.write(lenBuf)
+    rawDump.write(payload)
     extractor.processPacket(payload)
   })
 
@@ -125,6 +132,7 @@ async function main() {
   await new Promise(resolve => setTimeout(resolve, 30000))
 
   clearInterval(statusInterval)
+  rawDump.end()
   ffmpeg.stdin?.end()
   p2pSession.stop()
 
