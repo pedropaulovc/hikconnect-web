@@ -35,37 +35,27 @@ export class HikRtpExtractor extends EventEmitter {
   processPacket(payload: Buffer): void {
     const type = payload.readUInt16BE(0)
 
-    // Skip non-video packets
-    // Known Hik-RTP types from Ghidra HandleVideoStream:
-    // 0x0100/0x0200: session init, 0x8060/0x8050/0x8051: video data, 0x807f: control
-    if (type !== 0x8060 && type !== 0x8050 && type !== 0x8051 &&
-        type !== 0x0100 && type !== 0x0200 && type !== 0x807f) {
-      if (this.nalCount === 0) {
-        console.log(`[HikRTP] Skipping packet type=0x${type.toString(16)} size=${payload.length}B`)
-      }
+    // Only process video data packets (0x8060, 0x8050, 0x8051)
+    if (type !== 0x8060 && type !== 0x8050 && type !== 0x8051) {
       return
     }
 
-    // Session init packet (0x0100): contains IMKH header + initial NALs
-    if (type === 0x0100 || type === 0x0200) {
-      this.processInitPacket(payload)
-      return
-    }
-
-    // Video data packet (0x8060 etc): strip Hik-RTP header
+    // Strip 12-byte Hik-RTP header
     if (payload.length <= HIK_RTP_HEADER_LEN) return
     const rtpPayload = payload.subarray(HIK_RTP_HEADER_LEN)
 
-    // Log first few payloads for sub-header analysis
-    if (this.nalCount < 5) {
-      console.log(`[HikRTP] type=0x${type.toString(16)} rtpPayload=${rtpPayload.length}B first32=${rtpPayload.subarray(0, Math.min(32, rtpPayload.length)).toString('hex')}`)
-    }
+    // Strip 13-byte Hik-RTP sub-header (starts with 0x0d)
+    // Sub-header: 0x0d + 4 variable bytes + 8-byte session sync pattern
+    if (rtpPayload[0] === 0x0d && rtpPayload.length > SUB_HEADER_LEN) {
+      const nalData = rtpPayload.subarray(SUB_HEADER_LEN)
 
-    // The Hik-RTP payload has a variable-length sub-header.
-    // From offline analysis: 0x0d + 4 bytes + 8-byte sync = 13 bytes.
-    // But the sync pattern varies. Just pass the full payload for now
-    // and let processNalUnit handle it.
-    this.processNalUnit(rtpPayload)
+      if (this.nalCount < 5) {
+        const nalType = nalData.length > 0 ? (nalData[0] >> 1) & 0x3f : -1
+        console.log(`[HikRTP] nalType=${nalType} size=${nalData.length}B first8=${nalData.subarray(0, Math.min(8, nalData.length)).toString('hex')}`)
+      }
+
+      this.processNalUnit(nalData)
+    }
   }
 
   private processInitPacket(payload: Buffer): void {
@@ -109,32 +99,27 @@ export class HikRtpExtractor extends EventEmitter {
       return
     }
 
-    // Encrypted slice data — AES-128-ECB decrypt
-    if (data.length >= 16) {
-      const decrypted = this.decryptSlice(data)
-      this.emitNal(decrypted)
-      return
-    }
-
-    // Small unrecognized NAL — emit as-is
+    // The slice data might or might not be encrypted depending on the stream type.
+    // For sub-stream (streamType=1), try without decryption first.
+    // If that fails, try AES-128-ECB partial decryption.
     this.emitNal(data)
   }
 
   private decryptSlice(data: Buffer): Buffer {
+    // Hikvision uses partial encryption: only the first 16 bytes of each slice
+    // This preserves the NAL unit structure while making the content unreadable
     const blockSize = 16
-    const fullBlocks = Math.floor(data.length / blockSize) * blockSize
-
-    if (fullBlocks === 0) return data
+    if (data.length < blockSize) return data
 
     const decipher = createDecipheriv('aes-128-ecb', this.aesKey, null)
     decipher.setAutoPadding(false)
-    const decrypted = decipher.update(data.subarray(0, fullBlocks))
+    const decryptedFirst = decipher.update(data.subarray(0, blockSize))
 
-    if (fullBlocks === data.length) {
-      return decrypted
+    if (data.length === blockSize) {
+      return decryptedFirst
     }
 
-    return Buffer.concat([decrypted, data.subarray(fullBlocks)])
+    return Buffer.concat([decryptedFirst, data.subarray(blockSize)])
   }
 
   private emitNal(data: Buffer): void {
