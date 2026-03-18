@@ -95,24 +95,34 @@ export class HikRtpExtractor extends EventEmitter {
     const firstByte = data[0]
     const nalType = (firstByte >> 1) & 0x3f
 
-    // Length-prefixed format: 2-byte type prefix + 2-byte length + NAL data
-    if (firstByte === 0x00 && data[1] <= 0x02 && data.length > 4) {
-      const dataLen = data.readUInt16BE(2)
-      if (dataLen > 0 && dataLen <= data.length - 4) {
-        this.emitNal(data.subarray(4, 4 + dataLen))
-        return
+    // Length-prefixed format: 00 NN 00 LL [LL bytes of NAL data]
+    // Multiple length-prefixed NALs can be concatenated in one fragment
+    if (firstByte === 0x00 && data.length > 4) {
+      let offset = 0
+      while (offset + 4 <= data.length) {
+        if (data[offset] !== 0x00) break
+        const dataLen = data.readUInt16BE(offset + 2)
+        if (dataLen <= 0 || offset + 4 + dataLen > data.length) break
+        this.emitNal(data.subarray(offset + 4, offset + 4 + dataLen))
+        offset += 4 + dataLen
       }
+      return
     }
 
-    // Plaintext VPS (32), SPS (33), PPS (34)
-    if (nalType >= 32 && nalType <= 34) {
+    // Valid H.265 NAL types (VPS=32, SPS=33, PPS=34, slices=0-21)
+    if (nalType <= 40) {
       this.emitNal(data)
       return
     }
 
-    // Pass slice data through — on sub-stream (streamType=1), video may not be encrypted
-    // On encrypted streams, AES-128-ECB(MD5(verificationCode)) would need to be applied
-    this.emitNal(data)
+    // Hikvision custom NAL types (48-63 range): pass through
+    // FFmpeg may skip these but they don't corrupt the stream
+    if (nalType >= 48) {
+      this.emitNal(data)
+      return
+    }
+
+    // Unknown type — skip to avoid corrupting the stream
   }
 
   private decryptSlice(data: Buffer): Buffer {
