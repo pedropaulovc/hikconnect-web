@@ -94,15 +94,20 @@ export class HikRtpExtractor extends EventEmitter {
   }
 
   private emitNal(data: Buffer): void {
-    if (data.length === 0) return
+    if (data.length < 2) return
+
+    // Validate NAL type before emitting — skip obviously invalid data
+    const nalType = (data[0] >> 1) & 0x3f
+    // Valid H.265: types 0-40 (standard) + 48-63 (Hikvision custom/UNSPEC)
+    // Skip: type 0 with second byte 0 (likely padding/zero data)
+    if (nalType === 0 && data[1] === 0) return
+
     this.nalCount++
 
     // Emit with Annex B start code prefix
     const annexB = Buffer.concat([ANNEX_B_START_CODE, data])
     this.emit('nalUnit', annexB)
 
-    // Also emit raw for analysis
-    const nalType = (data[0] >> 1) & 0x3f
     if (this.nalCount <= 10 || this.nalCount % 500 === 0) {
       const names: Record<number, string> = {
         0: 'TRAIL_N', 1: 'TRAIL_R', 19: 'IDR_W_RADL', 20: 'IDR_N_LP',
