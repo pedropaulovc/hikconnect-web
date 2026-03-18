@@ -45,6 +45,7 @@ async function main() {
     userId: '',
     channelNo: 1,
     streamType: 1,
+    streamTokens: [],
   })
 
   p2pSession.on('stateChange', ({ from, to }: { from: string; to: string }) => {

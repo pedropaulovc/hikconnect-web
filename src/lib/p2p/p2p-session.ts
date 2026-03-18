@@ -11,7 +11,8 @@
 
 import { createSocket, type Socket as UdpSocket } from 'node:dgram'
 import { EventEmitter } from 'node:events'
-import { encodeV3Message, decodeV3Message, defaultMask, Opcode } from './v3-protocol'
+import { createCipheriv } from 'node:crypto'
+import { encodeV3Message, decodeV3Message, defaultMask, Opcode, crc8 } from './v3-protocol'
 
 // -- Config --
 
@@ -32,6 +33,7 @@ export type P2PSessionConfig = {
   userId: string
   channelNo: number
   streamType: number      // 0=main, 1=sub
+  streamTokens: string[]  // Stream auth tokens from /api/user/token/get
 }
 
 // -- Packet types --
@@ -148,27 +150,105 @@ export class P2PSession extends EventEmitter {
   }
 
   private buildP2PServerRequest(): Buffer {
-    // Build the TRANSFOR_DATA request to P2P servers using V3 protocol.
-    // The body uses standard V3 TLV attributes, encrypted with AES-128-CBC.
-    // Key from API KMS entry (first 16 bytes).
-    const body = encodeV3Message({
-      msgType: Opcode.TRANSFOR_DATA,
-      seqNum: ++this.seqNum,
-      reserved: 0x6234,
-      mask: defaultMask({
-        encrypt: true,
-        saltIndex: this.config.p2pKeySaltIndex,
-        saltVersion: this.config.p2pKeySaltVer,
-        is2BLen: true,
-      }),
-      attributes: [
-        { tag: 0x01, value: Buffer.from(this.config.userId || '00000000000000000000000000000000') },
-        { tag: 0x02, value: Buffer.alloc(4) },
-        { tag: 0x03, value: Buffer.from([0x00, 0x01]) },
-      ],
-    }, this.config.p2pKey)
+    // Build V3 TRANSFOR_DATA (0x0b04) for P2P servers.
+    //
+    // From Ghidra decompilation of ComposeTransfor + ComposeMsgBody:
+    // The body contains two outer TLV attributes:
+    //   tag=0x00: ComposeTransfor output (sub-TLVs for routing/connection info)
+    //   tag=0x07: Full serialized body (2-byte length since is2BLen=true)
+    //
+    // ComposeTransfor writes these sub-TLVs:
+    //   0x71: 1B busType flag (from tag_V3Transfor[0])
+    //   0x72: 1B flag (from tag_V3Transfor[1])
+    //   0x75: 1B flag (from tag_V3Transfor[2])
+    //   0x7f: 1B flag (from tag_V3Transfor[3])
+    //   0x74: string "IP:port" (local/device address)
+    //   0x73: string "IP:port" (backup address)
+    //   0x8c: 4B big-endian int (session/routing value)
+    //
+    // BuildTransMsg adds to the attribute struct:
+    //   offset 0x18: userId string
+    //   offset 0x30: device serial or hardware code
+    //   offset 0x60: session token/body string
 
-    return body
+    // Build ComposeTransfor sub-TLVs
+    const subTlvs: Buffer[] = []
+    // tag 0x71: busType (1=preview)
+    subTlvs.push(Buffer.from([0x71, 0x01, 0x01]))
+    // tag 0x72: flag
+    subTlvs.push(Buffer.from([0x72, 0x01, 0x00]))
+    // tag 0x75: flag
+    subTlvs.push(Buffer.from([0x75, 0x01, 0x00]))
+    // tag 0x7f: flag
+    subTlvs.push(Buffer.from([0x7f, 0x01, 0x00]))
+    // tag 0x74: "deviceIP:port"
+    const devAddr = `${this.config.devicePublicIp}:${this.config.devicePublicPort}`
+    subTlvs.push(Buffer.from([0x74, devAddr.length]), Buffer.from(devAddr))
+    // tag 0x8c: 4-byte routing value (use 0 for now)
+    subTlvs.push(Buffer.from([0x8c, 0x04, 0x00, 0x00, 0x00, 0x00]))
+
+    const composedTransfor = Buffer.concat(subTlvs)
+
+    // Build the full body with outer tags 0x00 and 0x07
+    // tag 0x00 wraps the ComposeTransfor output
+    const tag00 = Buffer.concat([
+      Buffer.from([0x00, composedTransfor.length]),
+      composedTransfor,
+    ])
+
+    // Build the "large data" for tag 0x07
+    // This contains: userId + stream token + device serial info
+    const userId = this.config.userId || '00000000000000000000000000000000'
+    const token = this.config.streamTokens[0] || ''
+    const innerData: Buffer[] = []
+    // tag 0x01: userId (32 hex chars)
+    innerData.push(Buffer.from([0x01, userId.length]), Buffer.from(userId))
+    // tag 0x02: 4-byte value
+    const ts4 = Buffer.alloc(6)
+    ts4[0] = 0x02
+    ts4[1] = 0x04
+    ts4.writeUInt32BE(timestamp32(), 2)
+    innerData.push(ts4)
+    // tag 0x03: channel count
+    innerData.push(Buffer.from([0x03, 0x02, 0x00, 0x01]))
+    // tag 0x05: stream token (SESSION_KEY tag)
+    if (token) {
+      const tokenBuf = Buffer.from(token)
+      innerData.push(Buffer.from([0x05, tokenBuf.length]), tokenBuf)
+    }
+
+    const innerBuf = Buffer.concat(innerData)
+
+    // tag 0x07 with 2-byte length (is2BLen=true)
+    const tag07len = Buffer.alloc(3)
+    tag07len[0] = 0x07
+    tag07len.writeUInt16BE(innerBuf.length, 1)
+    const tag07 = Buffer.concat([tag07len, innerBuf])
+
+    const rawBody = Buffer.concat([tag00, tag07])
+
+    // AES-128-CBC encrypt
+    const aesKey = this.config.p2pKey.subarray(0, 16)
+    const iv = Buffer.alloc(16)
+    const cipher = createCipheriv('aes-128-cbc', aesKey, iv)
+    const encrypted = Buffer.concat([cipher.update(rawBody), cipher.final()])
+
+    // Build V3 header
+    const seq = ++this.seqNum
+    const mask = 0xda // encrypt=1, saltVer=1, saltIdx=3, expandHdr=0, is2BLen=1
+    const header = Buffer.alloc(12)
+    header[0] = 0xe2
+    header[1] = mask
+    header.writeUInt16BE(Opcode.TRANSFOR_DATA, 2)
+    header.writeUInt32BE(seq, 4)
+    header.writeUInt16BE(0x6234, 8)
+    header[10] = 0x0c
+    header[11] = 0x00
+
+    const full = Buffer.concat([header, encrypted])
+    full[11] = crc8(full)
+
+    return full
   }
 
   // -- Hole Punching --
