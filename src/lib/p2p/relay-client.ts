@@ -15,6 +15,14 @@
 
 import { Socket } from 'node:net'
 import { EventEmitter } from 'node:events'
+import { createCipheriv } from 'node:crypto'
+import {
+  generateKeyPair,
+  deriveSharedSecret,
+  ecdhDeriveSessionKey,
+  buildEcdhReqPacket,
+  spkiPublicKeyToRaw,
+} from './crypto'
 
 // -- Relay Protocol Constants --
 
@@ -131,7 +139,8 @@ export type RelayClientConfig = {
   deviceSerial: string
   ticket: string
   sessionKey: string
-  clientType?: number  // default: 55 (Hik-Connect mobile)
+  clientType?: number       // default: 55 (Hik-Connect mobile)
+  serverPublicKey?: string  // Base64-encoded SPKI/DER P-256 public key from API
 }
 
 type RelayState = 'disconnected' | 'connecting' | 'connected' | 'streaming'
@@ -200,6 +209,8 @@ export class RelayClient extends EventEmitter {
   /**
    * Send ClnConnectReq — initiates streaming through the relay.
    * From Ghidra: "RELAY_CMD_ClnConnectReq, DevSerial:%s, token:%.5s, clienttype:%d, sessionkey:%s"
+   *
+   * If serverPublicKey is configured, uses ECDH encryption (required by relay servers).
    */
   sendConnectReq(): void {
     const body = Buffer.concat([
@@ -209,9 +220,60 @@ export class RelayClient extends EventEmitter {
       encodeIntTlv(RelayTag.CLIENT_TYPE, this.config.clientType ?? 55),
     ])
 
+    if (this.config.serverPublicKey) {
+      this.sendEcdhConnectReq(body)
+      return
+    }
+
+    // Unencrypted fallback (may not work with modern relay servers)
     const frame = encodeRelayFrame(RelayCmd.CLN_CONNECT_REQ, ++this.seqNum, body)
     this.sendRaw(frame)
-    console.log(`[Relay] Sent ClnConnectReq (${body.length}B body, serial=${this.config.deviceSerial})`)
+    console.log(`[Relay] Sent ClnConnectReq unencrypted (${body.length}B body, serial=${this.config.deviceSerial})`)
+  }
+
+  private sendEcdhConnectReq(body: Buffer): void {
+    // 1. Parse server public key
+    const serverPubKeyDer = Buffer.from(this.config.serverPublicKey!, 'base64')
+    let serverPubKeyRaw: Buffer
+    if (serverPubKeyDer.length === 91) {
+      serverPubKeyRaw = spkiPublicKeyToRaw(serverPubKeyDer)
+    } else if (serverPubKeyDer.length === 65) {
+      serverPubKeyRaw = serverPubKeyDer
+    } else {
+      throw new Error(`Unexpected server public key length: ${serverPubKeyDer.length}`)
+    }
+
+    // 2. Generate ephemeral client key pair
+    const clientKp = generateKeyPair()
+    console.log(`[Relay] Client ECDH pubkey: ${clientKp.publicKey.toString('hex').substring(0, 40)}...`)
+
+    // 3. Compute ECDH shared secret (master key)
+    const masterKey = deriveSharedSecret(clientKp.privateKey, serverPubKeyRaw)
+    console.log(`[Relay] ECDH master key: ${masterKey.toString('hex').substring(0, 20)}...`)
+
+    // 4. Derive session key via AES-ECB counter KDF
+    const sessionKey = ecdhDeriveSessionKey(masterKey, 32)
+    console.log(`[Relay] Session key: ${sessionKey.toString('hex').substring(0, 20)}...`)
+
+    // 5. Encrypt the body with AES-128-CBC using session key
+    const encKey = sessionKey.subarray(0, 16)
+    const iv = Buffer.alloc(16) // Zero IV (same pattern as V3 protocol? or counter-based)
+    const bodyCipher = createCipheriv('aes-128-cbc', encKey, iv)
+    const encryptedBody = Buffer.concat([bodyCipher.update(body), bodyCipher.final()])
+
+    // 6. Build ECDH encrypted request packet
+    const packet = buildEcdhReqPacket({
+      sessionKey,
+      masterKey,
+      clientPublicKey: clientKp.publicKey,
+      channelId: 0x09,
+      bodyLength: encryptedBody.length,
+      body: encryptedBody,
+      seqNum: ++this.seqNum,
+    })
+
+    this.sendRaw(packet)
+    console.log(`[Relay] Sent ECDH ClnConnectReq (${packet.length}B total, ${encryptedBody.length}B encrypted body, serial=${this.config.deviceSerial})`)
   }
 
   sendKeepalive(): void {
@@ -277,9 +339,10 @@ export class RelayClient extends EventEmitter {
   }
 
   private handleFrame(frame: RelayFrame): void {
-    console.log(`[Relay] Frame cmd=0x${frame.cmd.toString(16)} seq=${frame.seq} bodyLen=${frame.bodyLen}`)
+    console.log(`[Relay] Frame cmd=0x${frame.cmd.toString(16)} seq=${frame.seq} bodyLen=${frame.bodyLen} body=${frame.body.toString('hex')}`)
 
-    if (frame.cmd === RelayCmd.CLN_CONNECT_RSP && this.state === 'connected') {
+    // Accept any command as ConnectRsp while we're waiting for connection confirmation
+    if (this.state === 'connected') {
       this.handleConnectRsp(frame)
       return
     }
