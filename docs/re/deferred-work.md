@@ -8,13 +8,17 @@ type: project
 
 ### Critical — Path A: P2P (UDP)
 
-1. **~~P2P server encryption~~** — RESOLVED. Uses P2PServerKey (not API KMS key), AES-128-CBC, correct CRC-8. Server returns SUCCESS.
+1. **~~P2P server encryption~~** — RESOLVED. Two-layer: outer AES-128-CBC with P2PServerKey, inner AES-128-CBC with P2PLinkKey (IV="01234567"+zeros).
 
-2. **P2P request body token tail** — `p2p-session.ts` bytes 74-185 (112 bytes) of the request body are templated from a pcap capture. The 96-byte dynamic portion (bytes 90-185) is session-bound and will expire. Need to figure out how stream tokens from `/api/user/token/get` are transformed into these 96 bytes. The 16-byte static prefix (bytes 74-89: `b6c595bf4682311f3846e447233c6513`) may be derived from the P2PServerKey.
+2. **~~P2P request body structure~~** — RESOLVED. Body is routing(11B) + tag=0x07(innerV3). Inner V3 = header + expand header (userId/clientId/channel) + encrypted PLAY_REQUEST TLVs. Now built dynamically in p2p-session.ts.
 
-3. **P2PServerKey source** — Currently captured via Frida (`e4465f2d...`). Key is stable per account but NOT from the API KMS endpoint. Comes from GrayConfig via `setP2PV3ConfigInfo`. Need to find the API endpoint or derive it from existing API data.
+3. **~~P2PLinkKey identification~~** — RESOLVED. First 32 ASCII chars of API KMS `secretKey`. Confirmed via Frida capture of `szP2PLinkKey` from InitParam.
 
-4. **NAT traversal** — WSL blocks inbound UDP. P2P server forwards our request to device, but device can't punch back. Need to test from VPS with public IP, or include STUN-discovered address in request.
+4. **Error 203 "Link status invalid"** — P2P server accepts our format but rejects with error 203. Likely needs CAS/STUN registration step before PLAY_REQUEST. The native app goes through `p2pnet_Init → STUN → CAS broker → SetPeerConnection` before streaming. Our code skips this and sends PLAY_REQUEST directly to the P2P server.
+
+5. **P2PServerKey source** — Still captured via Frida (`e4465f2d...`). Stable per account, from GrayConfig. Need to find the API endpoint.
+
+6. **clientId source** — Using hardcoded 0x0aed13f5 from capture. Comes from `CGlobalInfo::GetClientId()`. Need to find API source or derivation.
 
 ### Critical — Path B: VTM Relay (TCP)
 

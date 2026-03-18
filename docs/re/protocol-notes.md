@@ -8,31 +8,57 @@ type: project
 
 Two streaming paths, both reverse-engineered:
 
-### Path A: P2P (UDP) — STATUS: Server handshake SUCCESS, blocked on NAT
+### Path A: P2P (UDP) — STATUS: Body fully decoded, blocked on "Link status invalid"
 
 **P2P Server Handshake:**
 - Servers: `52.5.124.127:6000`, `52.203.168.207:6000`
 - Protocol: V3 TRANSFOR_DATA (0x0b04) → TRANSFOR_DATA2 (0x0b05)
-- Encryption: AES-128-CBC, key = P2PServerKey (32 bytes, stable per account)
-- P2PServerKey: `e4465f2d011ebf9d85eb32d46e1549bdf64c171d616a132afaba4b4d348a39d5`
-- saltIndex=3, saltVer=1
-- Key source: `NativeApi.setP2PV3ConfigInfo()` from GrayConfig, NOT from API KMS entry
-- CRC-8: Custom Hikvision bitwise algorithm (NOT polynomial 0x39), verified against 3 pcap packets
+- CRC-8: Custom Hikvision bitwise algorithm (NOT polynomial 0x39), verified against pcap
 - Reserved field: 0x6234 (protocol version constant in all V3 headers)
 
-**P2P Request Body (186 bytes, structure from pcap diff analysis):**
-- Bytes 0-19: Static routing header (contains serial fragment '367')
-- Bytes 20-21: V3 sequence number (dynamic)
-- Bytes 22-29: Protocol version + key version (101)
-- Bytes 30-63: tag=0x01 len=32 userId (TLV)
-- Bytes 64-69: tag=0x02 len=4 counter/timestamp (TLV)
-- Bytes 70-73: tag=0x03 len=2 channel number (TLV)
-- Bytes 74-89: 16 bytes static crypto material (same across sessions)
-- Bytes 90-185: 96 bytes session-specific token/crypto data (changes per session)
+**Two-Layer Encryption:**
+- **Outer:** AES-128-CBC, key = P2PServerKey[0:16], IV = zeros
+- **Inner:** AES-128-CBC, key = P2PLinkKey[0:16], IV = "01234567" + 8 zero bytes
+- P2PServerKey: `e4465f2d011ebf9d85eb32d46e1549bdf64c171d616a132afaba4b4d348a39d5` (from GrayConfig, stable per account)
+- P2PLinkKey: first 32 ASCII chars of API KMS `secretKey` (e.g., "6447f56b9e4229fb94b6f2677603e9c0")
+- P2PLinkKey confirmed via Frida capture of `szP2PLinkKey` from `InitParam.createPreviewHandle`
 
-**Error progression:** 0x101012 (wrong key) → 0x000003 (missing fields) → 0x101011 (wrong body format) → SUCCESS (tag=0x02=0, tag=0x84=deviceSessionId)
+**P2P Request Body Structure (fully decoded from Ghidra RE + pcap):**
+```
+Outer V3 envelope (12B header + AES-CBC encrypted body):
+├── Routing header (11 bytes): static, contains serial last 3 chars
+│   Hex: 30387e000c07050e + ASCII(serial[-3:])
+├── tag=0x07 (3 bytes): 2-byte BE length of inner V3 message
+└── Inner V3 message (PLAY_REQUEST 0x0c02):
+    ├── 12B V3 header: magic=0xe2, mask=0xde, msgType=0x0c02, reserved=0x6234
+    ├── 48B expand header (TLV):
+    │   ├── tag=0x00: key version (2B, e.g., 101)
+    │   ├── tag=0x01: userId (32B ASCII hex)
+    │   ├── tag=0x02: clientId (4B BE)
+    │   └── tag=0x03: channel (2B BE)
+    └── Encrypted body (AES-128-CBC with P2PLinkKey, PKCS5):
+        PLAY_REQUEST TLV attributes:
+        ├── tag=0x76: busType (1=preview, 2=playback)
+        ├── tag=0x05: sessionKey (base64(serial)+channel+timestamp+random)
+        ├── tag=0x78: streamType (0=main, 1=sub)
+        ├── tag=0x77: channelNo (2B BE)
+        ├── tag=0x7e: streamSession (4B BE)
+        ├── tag=0x7d: timeout? (4B BE, value=180)
+        ├── tag=0x7a: startTime ("YYYY-MM-DDTHH:MM:SS")
+        ├── tag=0x7b: stopTime
+        ├── tag=0x83: device serial
+        ├── tag=0xb2: session UUID
+        └── tag=0xb3: timestamp ms
+```
 
-**Blocker:** WSL environment blocks inbound UDP (STUN returns UDP_BLOCKED). Device can't punch back. Needs VPS with public IP.
+**Error progression:** 0x101012 (wrong key) → 0x000003 (missing fields) → 0x101011 (wrong body) → 0x0c (12, expired session) → 0xcb (203, "Link status invalid") → SUCCESS (tag=0x02=0)
+
+**Current blocker:** Error 203 "Link status invalid" from VPS. Server parses our request correctly but says the P2P link is invalid. Likely causes:
+1. Need CAS/STUN registration step before PLAY_REQUEST (the native app goes through p2pnet_Init → STUN → CAS broker exchange first)
+2. The routing header (first 11 bytes) may encode session-specific routing not yet understood
+3. The clientId (0x0aed13f5) may be device-installation-specific
+
+**Verified working from Android emulator:** The app successfully streams via direct UDP P2P to device 24.35.64.195:17193 (NAT-mapped port).
 
 ### Path B: VTM Relay (TCP) — STATUS: ECDH handshake partially decoded
 
