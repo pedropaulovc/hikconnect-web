@@ -28,12 +28,14 @@ Client                    P2P Server (52.x:6000)      Device (NVR)
   │── P2P_SETUP (0x0B02) ──────→│                        │
   │←─ 0x0B03 (device info) ─────│                        │
   │                              │── notify device ──────→│
-  │←─ 0x0C00 (PREVIEW_RSP) ─────────────────────────────│
+  │←─ 0x0C00 (hole punch req) ─────────────────────────│
+  │── 0x0C01 (punch rsp, 10x) ─────────────────────────→│
   │                              │                        │
+  │── PLAY_REQUEST (0x0C02) direct ────────────────────→│
   │── TRANSFOR_DATA (0x0B04) ───→│── relay PLAY_REQ ────→│
   │←─ 0x0B05 (SUCCESS) ─────────│                        │
   │                              │                        │
-  │←════════════ video data (UDP P2P) ═══════════════════│
+  │←════════════ video data (SRT/UDP) ═══════════════════│
 ```
 
 ### Key Modules
@@ -42,7 +44,8 @@ Client                    P2P Server (52.x:6000)      Device (NVR)
 |--------|------|---------|
 | HikConnect API client | `src/lib/hikconnect/client.ts` | REST API: login, devices, tickets, P2P config |
 | V3 protocol codec | `src/lib/p2p/v3-protocol.ts` | Hikvision binary protocol: encode/decode, TLV, CRC-8 |
-| P2P session | `src/lib/p2p/p2p-session.ts` | UDP P2P: P2P_SETUP, PLAY_REQUEST, hole punch, data exchange |
+| P2P session | `src/lib/p2p/p2p-session.ts` | UDP P2P: P2P_SETUP, hole punch (0xC00/0xC01), PLAY_REQUEST, data |
+| Relay client | `src/lib/p2p/relay-client.ts` | TCP relay: ECDH handshake, TLV framing (blocked on KDF) |
 | VTM client | `src/lib/p2p/vtm-client.ts` | TCP VTM relay: protobuf framing, ECDH (incomplete) |
 | Device P2P framing | `src/lib/p2p/device-p2p.ts` | Device-side packet types: 7534/80xx/41ab |
 | IMKH parser | `src/lib/p2p/imkh-parser.ts` | Hikvision media container: frame extraction, AES decrypt |
@@ -125,7 +128,7 @@ All protocol documentation lives in `docs/re/`:
 
 | File | Content |
 |------|---------|
-| `protocol-notes.md` | **Primary reference.** Complete P2P + VTM protocol spec: packet formats, keys, encryption, ECDH |
+| `protocol-notes.md` | **Primary reference.** Complete P2P + VTM + relay protocol spec. Includes iVMS-4200 Ghidra RE findings |
 | `deferred-work.md` | Outstanding work items with priority and status |
 | `api-notes.md` | API response shapes, P2P config injection model |
 | `v3-protocol-opcodes.md` | V3 binary protocol opcode table |

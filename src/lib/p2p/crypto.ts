@@ -191,22 +191,20 @@ export function buildEcdhReqPacket(opts: {
 
   // Encrypt body with ChaCha20 if present
   // From Ghidra: FUN_180012b50 sets up ChaCha20 with session key
-  // FUN_180012c90 sets nonce = [counter=0, nonce_word1=1, 0, 0] (12 bytes)
-  // FUN_180012d40 XORs body with keystream
-  let encryptedBody: Buffer | undefined
+  // FUN_180012c90 sets nonce = [counter=0, nonce_word1=1, 0, 0]
+  // TODO: KDF is wrong so encryption produces wrong output
+  let processedBody = body
   if (body && body.length > 0) {
-    // ChaCha20 IV: 4-byte LE counter (0) + 12-byte nonce (1 as LE uint32 + 8 zeros)
     const chachaIv = Buffer.alloc(16)
     chachaIv.writeUInt32LE(0, 0) // counter = 0
     chachaIv.writeUInt32LE(1, 4) // nonce word 1 = 1
-    // nonce words 2,3 = 0 (already zero)
 
     const cipher = createCipheriv('chacha20', sessionKey, chachaIv)
-    encryptedBody = cipher.update(body)
+    processedBody = cipher.update(body)
   }
 
-  const preHmac = encryptedBody
-    ? Buffer.concat([header, clientInfo, encryptedBody])
+  const preHmac = processedBody
+    ? Buffer.concat([header, clientInfo, processedBody])
     : Buffer.concat([header, clientInfo])
 
   // HMAC-SHA256 over the full packet content
