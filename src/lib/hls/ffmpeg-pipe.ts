@@ -27,8 +27,9 @@ export class FfmpegHlsPipe {
       '-c:v', 'libx264',           // Re-encode to H.264 for browser compatibility
       '-preset', 'ultrafast',     // Fastest encoding
       '-tune', 'zerolatency',     // Low-latency streaming
-      '-vf', 'scale=1280:720',    // Scale down 4K → 720p for real-time
-      '-crf', '28',               // Quality
+      '-vf', 'scale=640:360',      // Scale down 4K → 360p for real-time on modest VPS
+      '-crf', '30',               // Quality (higher = smaller files)
+      '-g', '25',                  // Keyframe every 25 frames (1 second at 25fps)
       '-f', 'hls',
       '-hls_time', String(segDuration),
       '-hls_list_size', '10',
