@@ -91,23 +91,30 @@ export function deriveSharedSecret(privateKey: Buffer, peerPublicKey: Buffer): B
  * Phase 2: XOR the 48 bytes with a hash of the input, then use first 32 bytes
  *   as new AES-256 key for the session
  *
- * Simplified for initial implementation: direct AES-256-ECB counter mode
- * producing `length` bytes of session key material.
+ * The full native KDF uses a custom Matyas-Meyer-Oseas hash + AES-256-ECB.
+ * From Ghidra RE: FUN_180016730 (custom hash) → FUN_180016a60 (key derivation).
+ *
+ * The custom hash is NOT a standard algorithm — it uses AES-256-ECB with
+ * a Merkle-Damgård-like construction. Exact implementation is complex.
+ *
+ * Current implementation: AES-256-ECB counter mode with master key directly.
+ * This produces deterministic output but may not match the server's expectation.
+ * The relay returns error 0x2715 (auth/decryption failure), indicating the
+ * KDF is not yet correct.
+ *
+ * TODO: Implement the exact FUN_180016730 hash or capture a known-good
+ * handshake from iVMS-4200 to derive the correct algorithm.
  */
 export function ecdhDeriveSessionKey(masterKey: Buffer, length: number): Buffer {
   const blocks: Buffer[] = []
   let remaining = length
-
-  // Counter block is 16 bytes, counter at byte 15 incremented before each use
   const counterBlock = Buffer.alloc(16)
   let counter = 1
 
   while (remaining > 0) {
-    // Increment counter (big-endian, starting from byte 15)
     counterBlock[15] = counter & 0xff
     counter++
 
-    // AES-256-ECB: encrypt the counter block with the full 32-byte master key
     const cipher = createCipheriv('aes-256-ecb', masterKey, null)
     cipher.setAutoPadding(false)
     const block = cipher.update(counterBlock)
