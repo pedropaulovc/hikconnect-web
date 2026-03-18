@@ -177,8 +177,11 @@ function decodeAttributes(buf: Buffer, is2BLen: boolean): V3Attribute[] {
   let offset = 0
   while (offset < buf.length) {
     const tag = buf[offset]
-    if (tag === AttrTag.END_MARKER) {
-      // End marker: tag 0xFF with length 0
+    // Tag 0xFF can be either:
+    // - End marker (length 0): just terminates the attribute list
+    // - Sub-TLV container (length > 0): contains nested TLVs (e.g., in P2P_SETUP)
+    // Check the length byte to distinguish
+    if (tag === AttrTag.END_MARKER && offset + 1 < buf.length && buf[offset + 1] === 0) {
       attrs.push({ tag, value: Buffer.alloc(0) })
       offset += 2
       break
@@ -202,22 +205,23 @@ function decodeAttributes(buf: Buffer, is2BLen: boolean): V3Attribute[] {
 
 // --- Message encode/decode ---
 
+/** AES IV for ALL Hikvision V3 encryption: "01234567" + 8 zero bytes */
+const HIK_V3_IV = Buffer.from('30313233343536370000000000000000', 'hex')
+
 /**
  * Encrypt body with AES-128-CBC PKCS5 padding.
  * Key: first 16 bytes of the provided key buffer.
- * IV: 16 zero bytes (standard for Hik V3 protocol).
+ * IV: "01234567" + 8 zeros (Hikvision V3 standard).
  */
 function aes128CbcEncrypt(body: Buffer, key: Buffer): Buffer {
   const aesKey = key.subarray(0, 16)
-  const iv = Buffer.alloc(16)
-  const cipher = createCipheriv('aes-128-cbc', aesKey, iv)
+  const cipher = createCipheriv('aes-128-cbc', aesKey, HIK_V3_IV)
   return Buffer.concat([cipher.update(body), cipher.final()])
 }
 
 function aes128CbcDecrypt(body: Buffer, key: Buffer): Buffer {
   const aesKey = key.subarray(0, 16)
-  const iv = Buffer.alloc(16)
-  const decipher = createDecipheriv('aes-128-cbc', aesKey, iv)
+  const decipher = createDecipheriv('aes-128-cbc', aesKey, HIK_V3_IV)
   return Buffer.concat([decipher.update(body), decipher.final()])
 }
 
