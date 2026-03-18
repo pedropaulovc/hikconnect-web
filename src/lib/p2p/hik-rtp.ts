@@ -23,6 +23,7 @@ export class HikRtpExtractor extends EventEmitter {
   private nalCount = 0
   private fragmentBuffer: Buffer[] = []
   private inFragment = false
+  private headerSeen = false  // Skip first 0x90 (session init with IMKH header)
 
   constructor(verificationCode: string) {
     super()
@@ -57,10 +58,46 @@ export class HikRtpExtractor extends EventEmitter {
     // 0xa0: last fragment
     // 0xd0: standalone single-packet frame?
 
-    // Each sub-frame's data may contain one or more NAL units.
-    // Don't try fragment reassembly — just pass each packet's data through.
-    // The H.265 Annex B start codes in processNalUnit will handle framing.
-    this.processNalUnit(nalData)
+    // Fragment reassembly based on sub-type high nibble:
+    // 0x90: first fragment (starts with length-prefixed NAL or raw NAL)
+    // 0x80: middle fragment (continuation data)
+    // 0xa0: last fragment (completes the NAL)
+    const fragType = subType & 0xf0
+
+    if (fragType === 0x90) {
+      // First fragment — check if this is the session init (first 0x90 with serial/IMKH)
+      if (!this.headerSeen) {
+        // First 0x90 packet contains session init (serial, IMKH header, padding)
+        // Skip it — it's not a NAL unit
+        this.headerSeen = true
+        this.fragmentBuffer = []
+        this.inFragment = false
+        return
+      }
+      // Subsequent 0x90: start new NAL reassembly, flush any pending
+      if (this.fragmentBuffer.length > 0) {
+        this.processNalUnit(Buffer.concat(this.fragmentBuffer))
+        this.fragmentBuffer = []
+      }
+      this.fragmentBuffer = [nalData]
+      this.inFragment = true
+    } else if (fragType === 0x80 && this.inFragment) {
+      // Middle fragment — append
+      this.fragmentBuffer.push(nalData)
+    } else if (fragType === 0xa0) {
+      // Last fragment — complete reassembly
+      if (this.inFragment) {
+        this.fragmentBuffer.push(nalData)
+        this.processNalUnit(Buffer.concat(this.fragmentBuffer))
+      } else {
+        this.processNalUnit(nalData)
+      }
+      this.fragmentBuffer = []
+      this.inFragment = false
+    } else {
+      // Unknown — emit as standalone
+      this.processNalUnit(nalData)
+    }
   }
 
   private processInitPacket(payload: Buffer): void {
