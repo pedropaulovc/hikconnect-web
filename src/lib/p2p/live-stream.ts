@@ -43,6 +43,12 @@ export type LiveStreamConfig = {
   streamType: number
   /** Server's public IP for P2P registration */
   localPublicIp?: string
+  /** Business type: 1=live preview (default), 2=playback */
+  busType?: number
+  /** Playback start time (YYYY-MM-DDTHH:MM:SS) */
+  startTime?: string
+  /** Playback stop time (YYYY-MM-DDTHH:MM:SS) */
+  stopTime?: string
   /** Device verification code (6 chars, used for AES decryption) */
   verificationCode: string
   /** HLS output configuration */
@@ -105,6 +111,9 @@ export class LiveStream extends EventEmitter {
         streamType: this.config.streamType,
         streamTokens: [],
         localPublicIp: this.config.localPublicIp,
+        busType: this.config.busType,
+        startTime: this.config.startTime,
+        stopTime: this.config.stopTime,
       })
 
       // Wire P2P data → HikRTP extractor → H.265 NALs → FFmpeg
