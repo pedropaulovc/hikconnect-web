@@ -91,6 +91,7 @@ export class LiveStream extends EventEmitter {
         userId: this.config.userId,
         channelNo: this.config.channelNo,
         streamType: this.config.streamType,
+        streamTokens: [],
       })
 
       this.p2pSession.on('data', (payload: Buffer) => {
