@@ -56,15 +56,16 @@ export class HikRtpExtractor extends EventEmitter {
     if (payload.length <= HIK_RTP_HEADER_LEN) return
     const rtpPayload = payload.subarray(HIK_RTP_HEADER_LEN)
 
-    // Check for sub-frame header (0x0d + sync pattern at offset 5)
-    if (rtpPayload[0] === 0x0d && rtpPayload.length > SUB_HEADER_LEN &&
-        rtpPayload.subarray(5, 13).equals(SUB_HEADER_SYNC)) {
-      const nalData = rtpPayload.subarray(SUB_HEADER_LEN)
-      this.processNalUnit(nalData)
-    } else {
-      // No sub-header — raw continuation data
-      this.processNalUnit(rtpPayload)
+    // Log first few payloads for sub-header analysis
+    if (this.nalCount < 5) {
+      console.log(`[HikRTP] type=0x${type.toString(16)} rtpPayload=${rtpPayload.length}B first32=${rtpPayload.subarray(0, Math.min(32, rtpPayload.length)).toString('hex')}`)
     }
+
+    // The Hik-RTP payload has a variable-length sub-header.
+    // From offline analysis: 0x0d + 4 bytes + 8-byte sync = 13 bytes.
+    // But the sync pattern varies. Just pass the full payload for now
+    // and let processNalUnit handle it.
+    this.processNalUnit(rtpPayload)
   }
 
   private processInitPacket(payload: Buffer): void {
