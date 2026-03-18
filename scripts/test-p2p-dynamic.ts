@@ -77,8 +77,22 @@ async function main() {
 
   console.log('Local public IP:', p2pSession['config'].localPublicIp)
 
+  let dataCount = 0
+  let totalDataBytes = 0
+  const fs = await import('fs')
+  const captureDir = '/tmp/p2p-capture'
+  fs.mkdirSync(captureDir, { recursive: true })
+
   p2pSession.on('data', (payload: Buffer) => {
-    console.log(`[DATA] ${payload.length}B first: ${payload.subarray(0, 16).toString('hex')}`)
+    dataCount++
+    totalDataBytes += payload.length
+    if (dataCount <= 20 || dataCount % 200 === 0) {
+      console.log(`[DATA] #${dataCount} ${payload.length}B total=${totalDataBytes}B type=0x${payload.readUInt16BE(0).toString(16)} first32=${payload.subarray(0, Math.min(32, payload.length)).toString('hex')}`)
+    }
+    // Save first 50 packets for analysis
+    if (dataCount <= 50) {
+      fs.writeFileSync(`${captureDir}/pkt-${String(dataCount).padStart(4, '0')}.bin`, payload)
+    }
   })
   p2pSession.on('v3message', (msg: { msgType: number; seqNum: number; reserved: number; mask: { encrypt: boolean }; attributes: { tag: number; value: Buffer }[] }) => {
     console.log(`[V3] cmd=0x${msg.msgType.toString(16)} seq=${msg.seqNum} reserved=0x${msg.reserved.toString(16)} encrypt=${msg.mask.encrypt} attrs=${msg.attributes.length}`)
