@@ -660,13 +660,26 @@ export class P2PSession extends EventEmitter {
     const type = buf.readUInt16BE(0)
 
     // Known control types
-    if (type === PktType.KEEPALIVE || type === 0x8001) {
-      // SRT keepalive or custom keepalive
+    // SRT keepalive (0x8001) — respond with SRT keepalive
+    if (type === 0x8001) {
+      // SRT keepalive: echo back with our socket ID
+      const resp = Buffer.alloc(16)
+      resp.writeUInt16BE(0x8001, 0) // F=1, type=1 (keepalive)
+      resp.writeUInt16BE(0, 2)
+      resp.writeUInt32BE(0, 4)
+      resp.writeUInt32BE(timestamp32(), 8)
+      resp.writeUInt32BE(this.srtPeerSocketId ?? 0, 12)
+      this.sendToDevice(resp)
+      return
+    }
+
+    // Custom keepalive (0x8001 from our PktType)
+    if (type === PktType.KEEPALIVE && type !== 0x8001) {
       this.sendKeepalive()
       return
     }
 
-    // SRT ACK (0x8002) or SRT light ACK (0x8005/0x8006) — just log
+    // SRT ACK (0x8002) or SRT light ACK (0x8005/0x8006) — respond to keep flow
     if (type === 0x8002 || type === 0x8005 || type === 0x8006) {
       return
     }
@@ -927,6 +940,9 @@ export class P2PSession extends EventEmitter {
   private srtDataCount = 0
   private srtTotalBytes = 0
 
+  private lastAckSeq = 0
+  private lastAckTime = 0
+
   private handleSrtDataPacket(buf: Buffer): void {
     // SRT data packet format (16-byte header + payload):
     // Bytes 0-3:  F(1) + seqNum(31)  — F=0 for data
@@ -944,11 +960,16 @@ export class P2PSession extends EventEmitter {
       console.log(`[SRT-DATA] #${this.srtDataCount} seq=${seqNum} payload=${payload.length}B total=${this.srtTotalBytes}B first16=${payload.subarray(0, Math.min(16, payload.length)).toString('hex')}`)
     }
 
-    // Emit the payload for IMKH parsing
+    // Emit the payload for processing
     this.emit('data', payload)
 
-    // Send SRT ACK for the received data
-    this.sendSrtAck(seqNum)
+    // Send SRT ACK periodically (every 10ms or 10 packets, whichever is sooner)
+    const now = Date.now()
+    if (now - this.lastAckTime >= 10 || this.srtDataCount % 10 === 0) {
+      this.sendSrtAck(seqNum)
+      this.lastAckSeq = seqNum
+      this.lastAckTime = now
+    }
   }
 
   private sendSrtAck(ackSeqNum: number): void {
