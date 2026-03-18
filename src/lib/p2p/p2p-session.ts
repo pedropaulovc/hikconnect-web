@@ -11,7 +11,8 @@
 
 import { createSocket, type Socket as UdpSocket } from 'node:dgram'
 import { EventEmitter } from 'node:events'
-import { encodeV3Message, decodeV3Message, defaultMask, Opcode } from './v3-protocol'
+import { createCipheriv } from 'node:crypto'
+import { encodeV3Message, decodeV3Message, defaultMask, Opcode, crc8 } from './v3-protocol'
 
 // -- Config --
 
@@ -148,24 +149,62 @@ export class P2PSession extends EventEmitter {
   }
 
   private buildP2PServerRequest(): Buffer {
-    // V3 TRANSFOR_DATA message with AES-encrypted session info
-    // Must use saltIndex/saltVer matching the P2P server key
-    return encodeV3Message({
-      msgType: Opcode.TRANSFOR_DATA,
-      seqNum: ++this.seqNum,
-      reserved: 0x6234, // Protocol version constant
-      mask: defaultMask({
-        encrypt: true,
-        saltIndex: this.config.p2pKeySaltIndex,
-        saltVersion: this.config.p2pKeySaltVer,
-        is2BLen: true,
-      }),
-      attributes: [
-        { tag: 0x02, value: Buffer.from(this.config.userId) },
-        { tag: 0x05, value: Buffer.from(this.config.sessionToken) },
-        { tag: 0x03, value: Buffer.from(this.config.deviceSerial) },
-      ],
-    }, this.config.p2pKey)
+    // Build the P2P server request body as a binary blob matching the
+    // format from libezstreamclient.so. The body structure (186 bytes) is:
+    //   bytes 0-29: binary header (contains serial fragment, protocol info)
+    //   bytes 30-31: tag=0x01, len=0x20 (userId TLV)
+    //   bytes 32-63: userId (32 hex chars)
+    //   bytes 64-65: tag=0x02, len=0x04 (integer TLV)
+    //   bytes 66-69: 4-byte value
+    //   bytes 70-71: tag=0x03, len=0x02 (channel count TLV)
+    //   bytes 72-73: 2-byte value
+    //   bytes 74-185: session/crypto data (112 bytes)
+    //
+    // Template from pcap capture, substitute userId.
+    const template = Buffer.from(
+      '30387e000c07050e3336370700ace2de' +
+      '0c020000008c62343c38000200650120' +
+      '66636661656339306135356634613631' + // userId bytes 0-15
+      '62346537323131313532613264383035' + // userId bytes 16-31
+      '02040adf8c3b03020001b6c595bf4682' +
+      '311f3846e447233c65137f6d4456c772' +
+      '46ba6b8af0d707523df9fb26a6f5b5a6' +
+      'ca7690e14a3711a280db00261fb80341' +
+      '8e19beeb91969e75fbab92fca3589427' +
+      '11718d23a0d890a70069be6e20f8e3d0' +
+      'bec433cb75595f743f32b5794b677b24' +
+      '2a305757e339d5147c55',
+      'hex',
+    )
+
+    // Substitute userId if available (32 hex chars at offset 32)
+    if (this.config.userId.length === 32) {
+      Buffer.from(this.config.userId, 'ascii').copy(template, 32)
+    }
+
+    // AES-128-CBC encrypt the body
+    const aesKey = this.config.p2pKey.subarray(0, 16)
+    const iv = Buffer.alloc(16)
+    const cipher = createCipheriv('aes-128-cbc', aesKey, iv)
+    const encrypted = Buffer.concat([cipher.update(template), cipher.final()])
+
+    // Build V3 header
+    const seq = ++this.seqNum
+    const mask = 0xda // encrypt=1, saltVer=1, saltIdx=3, expandHdr=0, is2BLen=1
+    const header = Buffer.alloc(12)
+    header[0] = 0xe2
+    header[1] = mask
+    header.writeUInt16BE(Opcode.TRANSFOR_DATA, 2)
+    header.writeUInt32BE(seq, 4)
+    header.writeUInt16BE(0x6234, 8) // reserved / protocol version
+    header[10] = 0x0c // header length
+    header[11] = 0x00 // CRC placeholder
+
+    const full = Buffer.concat([header, encrypted])
+    // Compute CRC over full message with byte 11 = 0
+    full[11] = crc8(full)
+
+    return full
   }
 
   // -- Hole Punching --
