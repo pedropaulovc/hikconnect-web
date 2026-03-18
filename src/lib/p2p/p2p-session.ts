@@ -171,61 +171,42 @@ export class P2PSession extends EventEmitter {
     //   offset 0x30: device serial or hardware code
     //   offset 0x60: session token/body string
 
-    // Build ComposeTransfor sub-TLVs
-    const subTlvs: Buffer[] = []
-    // tag 0x71: busType (1=preview)
-    subTlvs.push(Buffer.from([0x71, 0x01, 0x01]))
-    // tag 0x72: flag
-    subTlvs.push(Buffer.from([0x72, 0x01, 0x00]))
-    // tag 0x75: flag
-    subTlvs.push(Buffer.from([0x75, 0x01, 0x00]))
-    // tag 0x7f: flag
-    subTlvs.push(Buffer.from([0x7f, 0x01, 0x00]))
-    // tag 0x74: "deviceIP:port"
-    const devAddr = `${this.config.devicePublicIp}:${this.config.devicePublicPort}`
-    subTlvs.push(Buffer.from([0x74, devAddr.length]), Buffer.from(devAddr))
-    // tag 0x8c: 4-byte routing value (use 0 for now)
-    subTlvs.push(Buffer.from([0x8c, 0x04, 0x00, 0x00, 0x00, 0x00]))
+    // Use templated body from fresh pcap capture.
+    // Structure (186 bytes):
+    //   0-19:   routing header (static, contains serial fragment)
+    //   20-21:  V3 seq number (dynamic)
+    //   22-29:  protocol/key version (static)
+    //   30-63:  tag 0x01 userId (dynamic)
+    //   64-69:  tag 0x02 counter (dynamic)
+    //   70-73:  tag 0x03 channel (dynamic)
+    //   74-185: crypto/token session data (from pcap, session-bound)
+    const rawBody = Buffer.from(
+      '30387e000c07050e3336370700ace2de0c020000' +
+      '0000' +             // 20-21: seq placeholder
+      '62343cf600020065' + // 22-29: version
+      '0120' +             // 30-31: tag 0x01 len=32
+      '6663666165633930613535663461363162346537323131313532613264383035' +
+      '0204' +             // 64-65: tag 0x02 len=4
+      '00000000' +         // 66-69: counter placeholder
+      '0302' +             // 70-71: tag 0x03 len=2
+      '0001' +             // 72-73: channel placeholder
+      'b6c595bf4682311f3846e447233c6513' +
+      '6796570008d6a3391a85e2dd41088fa9' +
+      '431361d333af126fa42bee42a0b03d45' +
+      'a26f11fe472df298520f18cefa5aeee3' +
+      'aa9a8091eaa6dcc5ef0baba2c88d0150' +
+      '7b97f7fd6b9f4017b02761df725bba74' +
+      '789b9d4bd303e595800ec2708a3120d8',
+      'hex',
+    )
 
-    const composedTransfor = Buffer.concat(subTlvs)
-
-    // Build the full body with outer tags 0x00 and 0x07
-    // tag 0x00 wraps the ComposeTransfor output
-    const tag00 = Buffer.concat([
-      Buffer.from([0x00, composedTransfor.length]),
-      composedTransfor,
-    ])
-
-    // Build the "large data" for tag 0x07
-    // This contains: userId + stream token + device serial info
-    const userId = this.config.userId || '00000000000000000000000000000000'
-    const token = this.config.streamTokens[0] || ''
-    const innerData: Buffer[] = []
-    // tag 0x01: userId (32 hex chars)
-    innerData.push(Buffer.from([0x01, userId.length]), Buffer.from(userId))
-    // tag 0x02: 4-byte value
-    const ts4 = Buffer.alloc(6)
-    ts4[0] = 0x02
-    ts4[1] = 0x04
-    ts4.writeUInt32BE(timestamp32(), 2)
-    innerData.push(ts4)
-    // tag 0x03: channel count
-    innerData.push(Buffer.from([0x03, 0x02, 0x00, 0x01]))
-    // tag 0x05: stream token (SESSION_KEY tag)
-    if (token) {
-      const tokenBuf = Buffer.from(token)
-      innerData.push(Buffer.from([0x05, tokenBuf.length]), tokenBuf)
+    // Substitute dynamic fields
+    rawBody.writeUInt16BE(this.seqNum & 0xffff, 20)
+    rawBody.writeUInt32BE(timestamp32(), 66)
+    rawBody.writeUInt16BE(this.config.channelNo, 72)
+    if (this.config.userId.length === 32) {
+      Buffer.from(this.config.userId, 'ascii').copy(rawBody, 32)
     }
-
-    const innerBuf = Buffer.concat(innerData)
-
-    // tag 0x07 with 2-byte length (is2BLen=true)
-    const tag07len = Buffer.alloc(3)
-    tag07len[0] = 0x07
-    tag07len.writeUInt16BE(innerBuf.length, 1)
-    const tag07 = Buffer.concat([tag07len, innerBuf])
-
-    const rawBody = Buffer.concat([tag00, tag07])
 
     // AES-128-CBC encrypt
     const aesKey = this.config.p2pKey.subarray(0, 16)
