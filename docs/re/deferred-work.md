@@ -23,14 +23,20 @@ type: project
 
 11. **Visual verification of video output** — FFmpeg produces .ts segments and reports frame counts, but nobody has actually opened a segment in a player to confirm it shows a real camera image. FFmpeg can "decode" encrypted/garbled slice data and still produce files — they'd just be gray/green/corrupted. **This is the #1 thing to verify next.**
 
-### Video Encryption — Clarified
+### Video Encryption — SOLVED (2026-03-18)
 
-~~12. **Video decryption — BLOCKED on verification code**~~ — Previously assumed video slices were AES-128-ECB encrypted with `MD5(verificationCode)`. **This assumption is wrong.** iVMS-4200 and the Hik-Connect Android app both stream video using only HikConnect credentials — no verification code needed. This means either:
-- Video data is **plaintext** (and our pipeline already works, just needs visual verification)
-- Encryption key is derived from the **P2P session handshake** (sessionKey, P2PLinkKey, or similar), not an out-of-band code
-- Encryption is an **optional device setting** ("stream encryption") that is off by default
-
-The verification code likely only applies to local RTSP/ISAPI access or when "stream encryption" is explicitly enabled on the NVR.
+12. **Video decryption — IMPLEMENTED** — Reverse-engineered from `libPlayCtrl.so` (Ghidra analysis of `IDMXAESDecryptFrame`):
+    - **NAL type 49** = Hikvision encrypted NAL wrapper (HEVC unspec type)
+    - **Key** = `MD5(verification_code)` (e.g. MD5("ABCDEF")) → 16 bytes
+    - **Mode** = AES-128-ECB, custom Hikvision implementation (`IDMX_AES_decrypt_128`)
+    - **Scope** = **Per-NAL partial encryption** — only the first 16 bytes of each NAL body are encrypted (after the 2-byte HEVC NAL header). Rest is plaintext.
+    - **Structure**: `[2B type-49 header] [16B AES-ECB encrypted] [plaintext rest...]`
+    - Decrypted bytes contain the original NAL header + initial slice data
+    - For H.264 (codec < 3): full NAL body is encrypted (different from H.265)
+    - For H.265 (codec 3-6): only first 16 bytes (for performance — 4K frames are huge)
+    - **Encryption types**: type 1 = AES-128, type 2/0x12 = AES-128 (via IDMX_AES_set_decrypt_key), type 3/0x13 = AES-256
+    - ECDH path (udpEcdh=1) uses ChaCha20 + HMAC-SHA256 instead — not applicable for our device
+    - **Implementation**: `HikRtpExtractor` now accepts optional `verificationCode` constructor param. Set `VERIFICATION_CODE=ABCDEF` env var for test scripts.
 
 ### Remaining — Production Readiness
 
@@ -43,9 +49,9 @@ The verification code likely only applies to local RTSP/ISAPI access or when "st
 
 ### Remaining — ECDH for Relay/VTM
 
-15. **ECDH custom KDF** — Relay and VTM paths need ECDH P-256 handshake. The packet structure works (relay accepts, returns response) but the KDF uses a custom Matyas-Meyer-Oseas hash + SHA-256 DRBG (confirmed from ecdhCryption.dll RE). Relay returns error 0x2715. Need:
-    - Wireshark capture of iVMS-4200 ECDH for test vectors, or
-    - Precise FUN_180016730 reimplementation from Ghidra
+15. **ECDH custom KDF** — Relay and VTM paths need ECDH P-256 handshake. The packet structure works (relay accepts, returns response) but the KDF uses a custom Matyas-Meyer-Oseas hash + SHA-256 DRBG (confirmed from ecdhCryption.dll RE). Relay returns error 0x2715.
+    - **Frida capture (2026-03-18):** See `docs/re/ecdh-frida-capture.md`. ECDH is NOT triggered for device L38239367 (`udpEcdh=0`, `vtduServerPublicKey` all zeros). Complete InitParam structure captured. The Java API surface is fully mapped: `NativeApi.generateECDHKey()`, `setClientECDHKey()`, `enableStreamClientCMDEcdh()`.
+    - To get test vectors, need: (a) device with ECDH enabled, (b) ARM64 emulator for native Frida hooks, or (c) iVMS-4200 Windows with Frida hooking ecdhCryption.dll
 
 ### Remaining — Integration
 
@@ -56,7 +62,7 @@ The verification code likely only applies to local RTSP/ISAPI access or when "st
 
 ### Code Quality
 
-- 109 tests passing, 1 skipped (Vitest)
+- 128 tests passing, 1 skipped (Vitest)
 - Clean TypeScript build
 - Dead code removed from LiveStream and P2PSession
 - HikRtpExtractor unit tests added
