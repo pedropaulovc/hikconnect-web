@@ -94,28 +94,35 @@ export type V3Message = {
   attributes: V3Attribute[]
 }
 
-// --- CRC-8 (polynomial 0x39, init 0x00) ---
-
-const crc8Table = buildCrc8Table(0x39)
-
-function buildCrc8Table(poly: number): Uint8Array {
-  const table = new Uint8Array(256)
-  for (let i = 0; i < 256; i++) {
-    let crc = i
-    for (let bit = 0; bit < 8; bit++) {
-      crc = (crc & 0x80) ? ((crc << 1) ^ poly) & 0xff : (crc << 1) & 0xff
-    }
-    table[i] = crc
-  }
-  return table
-}
+// --- CRC-8 (Hikvision custom bitwise algorithm from libezstreamclient.so) ---
 
 export function crc8(data: Uint8Array): number {
-  let crc = 0x00
+  let crc = 0
   for (let i = 0; i < data.length; i++) {
-    crc = crc8Table[(crc ^ data[i]) & 0xff]
+    const x = (data[i] ^ crc) & 0xff
+
+    crc = (x & 1) ? 0x23 : 0
+    if (x & 2) crc ^= 0x46
+    if (x & 4) crc ^= 0x8c
+
+    let tmp = crc >>> 1
+    if ((crc ^ (x >>> 3)) & 1) tmp = (crc >>> 1) ^ 0x8c
+
+    crc = tmp >>> 1
+    if ((tmp ^ (x >>> 4)) & 1) crc = ((tmp >>> 1) | 0x80) ^ 0x0c
+
+    tmp = crc >>> 1
+    if ((crc ^ (x >>> 5)) & 1) tmp = ((crc >>> 1) | 0x80) ^ 0x0c
+
+    crc = tmp >>> 1
+    if ((tmp ^ (x >>> 6)) & 1) crc = ((tmp >>> 1) | 0x80) ^ 0x0c
+
+    tmp = crc >>> 1
+    if ((crc & 1) !== (x >>> 7)) tmp = ((crc >>> 1) | 0x80) ^ 0x0c
+
+    crc = tmp
   }
-  return crc
+  return crc & 0xff
 }
 
 // --- Mask byte encode/decode ---
