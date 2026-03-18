@@ -151,6 +151,7 @@ export class RelayClient extends EventEmitter {
   private seqNum = 0
   private config: RelayClientConfig
   private keepaliveInterval: ReturnType<typeof setInterval> | null = null
+  private ecdhSessionKey: Buffer | null = null
 
   constructor(config: RelayClientConfig) {
     super()
@@ -255,16 +256,19 @@ export class RelayClient extends EventEmitter {
     console.log(`[Relay] Session key: ${sessionKey.toString('hex').substring(0, 20)}...`)
 
     // 5. Build ECDH encrypted request packet
-    // Body will be ChaCha20-encrypted inside buildEcdhReqPacket
+    // From native code: local_200 = 9 (clientType) is used as channelId byte
     const packet = buildEcdhReqPacket({
       sessionKey,
       masterKey,
       clientPublicKey: clientKp.publicKey,
-      channelId: 0x09,
+      channelId: this.config.clientType ?? 55,
       bodyLength: body.length,
       body,
       seqNum: ++this.seqNum,
     })
+
+    // Store session key for decrypting responses
+    this.ecdhSessionKey = sessionKey
 
     this.sendRaw(packet)
     console.log(`[Relay] Sent ECDH ClnConnectReq (${packet.length}B total, ${body.length}B body, serial=${this.config.deviceSerial})`)
@@ -362,6 +366,7 @@ export class RelayClient extends EventEmitter {
     let relayPort = 0
     let sendRate = 0
     let errorCode = 0
+    let streamId = ''
 
     for (const attr of attrs) {
       switch (attr.tag) {
@@ -371,26 +376,43 @@ export class RelayClient extends EventEmitter {
         case RelayTag.PORT:
           relayPort = attr.value.length >= 2 ? attr.value.readInt16BE(0) : 0
           break
-        case RelayTag.SEND_RATE:
-          sendRate = attr.value.length >= 4 ? attr.value.readInt32BE(0) : 0
+        case RelayTag.SEND_RATE: {
+          // From Ghidra ConvertRelayServerError: values >= 0x2712 are error codes
+          const val = attr.value.length >= 4 ? attr.value.readInt32BE(0) : 0
+          if (val >= 0x2712) {
+            errorCode = val
+          } else {
+            sendRate = val
+          }
           break
+        }
         case RelayTag.FIELD_09:
           errorCode = attr.value.length >= 4 ? attr.value.readInt32BE(0) : 0
+          break
+        case RelayTag.DEVICE_SERIAL:
+          streamId = attr.value.toString('utf8')
           break
         default:
           console.log(`[Relay] ConnectRsp attr tag=0x${attr.tag.toString(16)} len=${attr.value.length} val=${attr.value.toString('hex')}`)
       }
     }
 
-    console.log(`[Relay] ConnectRsp: host=${relayHost} port=${relayPort} sendRate=${sendRate} error=${errorCode}`)
+    console.log(`[Relay] ConnectRsp: host=${relayHost} port=${relayPort} sendRate=${sendRate} error=${errorCode} streamId=${streamId}`)
 
     if (errorCode !== 0) {
-      this.emit('error', new Error(`Relay connect error: ${errorCode}`))
+      // Known relay error codes from Ghidra ConvertRelayServerError
+      const errorNames: Record<number, string> = {
+        0x2712: 'redirect',
+        0x2715: 'auth_failed_or_body_decryption_error',
+        0x2716: 'device_busy',
+        0x17D7: 'device_no_relay_resource',
+      }
+      const name = errorNames[errorCode] ?? `unknown_${errorCode}`
+      console.log(`[Relay] Error ${errorCode} (0x${errorCode.toString(16)}): ${name}`)
+      this.emit('error', new Error(`Relay error: ${name} (${errorCode})`))
       return
     }
 
-    // If relay redirects to a different host, we'd need to reconnect
-    // For now, assume same connection is used for data
     this.state = 'streaming'
     this.startKeepalive()
     this.emit('streaming', { relayHost, relayPort, sendRate })
