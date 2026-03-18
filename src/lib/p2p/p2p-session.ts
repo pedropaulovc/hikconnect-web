@@ -11,7 +11,7 @@
 
 import { createSocket, type Socket as UdpSocket } from 'node:dgram'
 import { EventEmitter } from 'node:events'
-import { createCipheriv } from 'node:crypto'
+import { createCipheriv, randomUUID } from 'node:crypto'
 import { encodeV3Message, decodeV3Message, defaultMask, Opcode, crc8 } from './v3-protocol'
 
 // -- Config --
@@ -247,7 +247,7 @@ export class P2PSession extends EventEmitter {
     writeTlv(0x7a, Buffer.from(startTime))                       // start time
     writeTlv(0x7b, Buffer.from(nowTime))                         // stop time
     writeTlv(0x83, Buffer.from(serial))                          // device serial
-    writeTlv(0xb2, Buffer.from(`${Date.now().toString(16)}-0000-0000-0000-000000000000`)) // session ID
+    writeTlv(0xb2, Buffer.from(randomUUID()))                     // session UUID
     writeTlv(0xb3, Buffer.from(String(Date.now())))              // timestamp ms
 
     return Buffer.concat(attrs)
