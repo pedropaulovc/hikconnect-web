@@ -37,6 +37,7 @@ export type P2PSessionConfig = {
   channelNo: number
   streamType: number      // 0=main, 1=sub
   streamTokens: string[]  // Stream auth tokens from /api/user/token/get
+  localPublicIp?: string  // Public IP for P2P_SETUP registration
 }
 
 // -- Packet types --
@@ -144,19 +145,108 @@ export class P2PSession extends EventEmitter {
   // -- P2P Server Contact --
 
   private async contactP2PServers(): Promise<void> {
-    // Send TEARDOWN first to clear any stale link state (the native app does this)
-    const teardown = this.buildTeardownRequest()
+    // Step 1: P2P_SETUP (0x0B02) — registers "link" with P2P server
+    // This is the CAS broker registration step. Without it, PLAY_REQUEST
+    // returns error 203 "Link status invalid".
+    const setup = this.buildP2PSetupRequest()
     for (const server of this.config.p2pServers) {
-      this.sendTo(teardown, server.port, server.host)
+      this.sendTo(setup, server.port, server.host)
     }
-    await delay(500)
+    await delay(2000)
 
-    // Then send PLAY_REQUEST
+    // Step 2: PLAY_REQUEST wrapped in TRANSFOR_DATA (0x0B04)
     const msg = this.buildP2PServerRequest()
     for (const server of this.config.p2pServers) {
       this.sendTo(msg, server.port, server.host)
     }
     await delay(2000)
+  }
+
+  private buildP2PSetupRequest(): Buffer {
+    // Build P2P_SETUP (0x0B02) — standalone V3 message (NOT wrapped in TRANSFOR_DATA).
+    // This registers the client "link" with the P2P server.
+    //
+    // From Ghidra RE of ComposeMsgBody case 0x0B02:
+    //   ComposeTransfor() — inline sub-TLVs (0x71, 0x72, 0x75, 0x7f, 0x74, 0x73, 0x8c)
+    //   tag=0x05: session key
+    //   tag=0x06: additional session info
+    //   tag=0x00: device serial
+    //   busType byte
+    //   tag=0x04: encoded data
+    //   tag=0xFF: end marker
+
+    const serial = this.config.deviceSerial
+    const b64Serial = Buffer.from(serial).toString('base64')
+    const now = new Date()
+    const dateStr = now.getFullYear().toString()
+      + String(now.getMonth() + 1).padStart(2, '0')
+      + String(now.getDate()).padStart(2, '0')
+      + String(now.getHours()).padStart(2, '0')
+      + String(now.getMinutes()).padStart(2, '0')
+      + String(now.getSeconds()).padStart(2, '0')
+    const rand5 = String(Math.floor(10000 + Math.random() * 90000))
+    const sessionKey = b64Serial + String(this.config.channelNo) + dateStr + rand5
+    const localAddr = this.socket?.address()
+    const localPort = localAddr?.port || 0
+    // Use configured public IP if available, fall back to socket address
+    const localIp = this.config.localPublicIp || localAddr?.address || '0.0.0.0'
+
+    // Build body (order from captured P2P_SETUP pcap):
+    //   tag=0x05: session key (32 bytes)
+    //   tag=0x06: userId (32 bytes)
+    //   tag=0x00: device serial
+    //   tag=0x04: protocol version (value=3)
+    //   tag=0xFF: ComposeTransfor sub-TLVs as value
+    const parts: Buffer[] = []
+    const writeTlv = (tag: number, value: Buffer) => {
+      parts.push(Buffer.from([tag, value.length]), value)
+    }
+
+    writeTlv(0x05, Buffer.from(sessionKey))         // session key
+    writeTlv(0x06, Buffer.from(this.config.userId))  // userId
+    writeTlv(0x00, Buffer.from(serial))              // device serial
+    writeTlv(0x04, Buffer.from([0x03]))              // protocol_version=3
+
+    // ComposeTransfor sub-TLVs wrapped in tag=0xFF
+    const transforParts: Buffer[] = []
+    const writeTransforTlv = (tag: number, value: Buffer) => {
+      transforParts.push(Buffer.from([tag, value.length]), value)
+    }
+    writeTransforTlv(0x71, Buffer.from([0x01]))  // busType=1 (preview)
+    writeTransforTlv(0x72, Buffer.from([0x03]))  // protocol flag (value=3 from capture)
+    writeTransforTlv(0x75, Buffer.from([0x01]))  // flag (value=1 from capture)
+    writeTransforTlv(0x7f, Buffer.from([0x0a]))  // NAT type/flag (value=0x0a from capture)
+    writeTransforTlv(0x74, Buffer.from(`${localIp}:${localPort}`))  // local address
+    const routingVal = Buffer.alloc(4)
+    writeTransforTlv(0x8c, routingVal)           // routing value (zeros)
+    const transforData = Buffer.concat(transforParts)
+    writeTlv(0xff, transforData)
+
+    const body = Buffer.concat(parts)
+
+    // P2P_SETUP (0x0B02) is NOT in the "important opcodes" range (0x0c02-0x0c18).
+    // BuildSendMsg uses P2PServerKey (not P2PLinkKey) and NO expand header for these opcodes.
+    const serverKey = this.config.p2pKey.subarray(0, 16)
+    const iv = Buffer.from('30313233343536370000000000000000', 'hex') // "01234567" + zeros
+    const cipher = createCipheriv('aes-128-cbc', serverKey, iv)
+    const encryptedBody = Buffer.concat([cipher.update(body), cipher.final()])
+
+    // Build V3 header — NO expand header (expandHdr bit = 0)
+    // P2P_SETUP uses seq=0 (from pcap capture)
+    const seq = 0
+    const mask = 0xda // encrypt=1, saltVer=1, saltIdx=3, expandHdr=0, is2BLen=1
+    const header = Buffer.alloc(12)
+    header[0] = 0xe2
+    header[1] = mask
+    header.writeUInt16BE(0x0b02, 2) // P2P_SETUP
+    header.writeUInt32BE(seq, 4)
+    header.writeUInt16BE(0x6234, 8)
+    header[10] = 0x0c // headerLen=12 (no expand header)
+    header[11] = 0x00
+
+    const full = Buffer.concat([header, encryptedBody])
+    full[11] = crc8(full)
+    return full
   }
 
   private buildP2PServerRequest(): Buffer {
@@ -188,7 +278,7 @@ export class P2PSession extends EventEmitter {
 
     // AES-128-CBC encrypt outer body with P2PServerKey
     const outerKey = this.config.p2pKey.subarray(0, 16)
-    const outerIv = Buffer.alloc(16)
+    const outerIv = Buffer.from('30313233343536370000000000000000', 'hex') // "01234567" + zeros
     const outerCipher = createCipheriv('aes-128-cbc', outerKey, outerIv)
     const encrypted = Buffer.concat([outerCipher.update(outerBody), outerCipher.final()])
 
@@ -296,19 +386,21 @@ export class P2PSession extends EventEmitter {
   }
 
   private buildOuterBody(innerV3: Buffer): Buffer {
-    // Routing header (11 bytes) — contains serial fragment, static structure
-    // From pcap analysis: the first 11 bytes are consistent across sessions
+    // Outer body for TRANSFOR_DATA (0x0B04):
+    //   tag=0x00: device serial (ComposeTransfor output = just serial for routing)
+    //   tag=0x07: inner V3 message (2-byte BE length)
     const serial = this.config.deviceSerial
-    const serialEnd = serial.slice(-3) // Last 3 chars of serial
-    const routing = Buffer.from('30387e000c07050e', 'hex')
-    const routingWithSerial = Buffer.concat([routing, Buffer.from(serialEnd)])
+    const serialTag = Buffer.alloc(2 + serial.length)
+    serialTag[0] = 0x00 // tag
+    serialTag[1] = serial.length // length
+    Buffer.from(serial).copy(serialTag, 2)
 
     // tag=0x07 with 2-byte BE length (inner V3 message as value)
     const tag07header = Buffer.alloc(3)
     tag07header[0] = 0x07
     tag07header.writeUInt16BE(innerV3.length, 1)
 
-    return Buffer.concat([routingWithSerial, tag07header, innerV3])
+    return Buffer.concat([serialTag, tag07header, innerV3])
   }
 
   private buildTeardownRequest(): Buffer {
@@ -380,7 +472,7 @@ export class P2PSession extends EventEmitter {
     // Wrap in outer TRANSFOR_DATA
     const outerBody = this.buildOuterBody(innerFull)
     const outerKey = this.config.p2pKey.subarray(0, 16)
-    const outerIv = Buffer.alloc(16)
+    const outerIv = Buffer.from('30313233343536370000000000000000', 'hex')
     const outerCipher = createCipheriv('aes-128-cbc', outerKey, outerIv)
     const encrypted = Buffer.concat([outerCipher.update(outerBody), outerCipher.final()])
 

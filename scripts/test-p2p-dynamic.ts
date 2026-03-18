@@ -59,6 +59,7 @@ async function main() {
     channelNo: 1,
     streamType: 1,
     streamTokens: tokens,
+    localPublicIp: '5.161.255.20',
   })
 
   p2pSession.on('data', (payload: Buffer) => {
