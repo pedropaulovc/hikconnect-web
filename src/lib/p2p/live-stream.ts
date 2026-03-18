@@ -7,7 +7,6 @@
  */
 
 import { EventEmitter } from 'node:events'
-import { createHash, createDecipheriv } from 'node:crypto'
 import { P2PSession, type P2PServer } from './p2p-session'
 import { FfmpegHlsPipe, type HlsConfig } from '../hls/ffmpeg-pipe'
 import { HikRtpExtractor } from './hik-rtp'
@@ -62,15 +61,11 @@ export class LiveStream extends EventEmitter {
   private p2pSession: P2PSession | null = null
   private hlsPipe: FfmpegHlsPipe | null = null
   private _state: LiveStreamState = 'idle'
-  private aesKey: Buffer
-  private receivedInit = false
   private bytesReceived = 0
 
   constructor(config: LiveStreamConfig) {
     super()
     this.config = config
-    // Derive AES key from verification code: MD5 of the code
-    this.aesKey = createHash('md5').update(config.verificationCode).digest()
   }
 
   get state(): LiveStreamState {
@@ -149,66 +144,6 @@ export class LiveStream extends EventEmitter {
     if (this._state === 'stopped') return
     this.cleanup()
     this.transition('stopped')
-  }
-
-  private onStreamData(payload: Buffer): void {
-    this.bytesReceived += payload.length
-
-    // Skip the init data packet (01000101 header with device serial + IMKH header)
-    if (!this.receivedInit && payload.length >= 4) {
-      const header = payload.readUInt32BE(0)
-      if (header === 0x01000101) {
-        this.receivedInit = true
-        // The init packet contains IMKH header info but no actual video data
-        // Parse it for codec info
-        const imkhOffset = payload.indexOf(Buffer.from('IMKH'))
-        if (imkhOffset >= 0) {
-          const codecType = payload[imkhOffset + 8]
-          this.emit('codecInfo', {
-            video: codecType === 5 ? 'h265' : 'h264',
-            imkhOffset,
-          })
-        }
-        return
-      }
-    }
-
-    // Try to decrypt and pass to FFmpeg
-    try {
-      const decrypted = this.decryptFrameData(payload)
-      this.hlsPipe?.write(decrypted)
-    } catch {
-      // If decryption fails, try passing raw data
-      // (some frames may not be encrypted)
-      this.hlsPipe?.write(payload)
-    }
-  }
-
-  /**
-   * Decrypt frame data using AES-128-ECB with the verification code key.
-   * Hikvision uses partial encryption: only the first 16 bytes of each
-   * frame may be encrypted, or the entire frame depending on device config.
-   */
-  private decryptFrameData(data: Buffer): Buffer {
-    if (data.length < 16) return data
-
-    // Try full AES-128-ECB decryption
-    try {
-      const decipher = createDecipheriv('aes-128-ecb', this.aesKey, null)
-      decipher.setAutoPadding(false)
-
-      // Align to 16-byte blocks
-      const alignedLen = Math.floor(data.length / 16) * 16
-      if (alignedLen === 0) return data
-
-      const aligned = data.subarray(0, alignedLen)
-      const decrypted = Buffer.concat([decipher.update(aligned)])
-      const remainder = data.subarray(alignedLen)
-
-      return Buffer.concat([decrypted, remainder])
-    } catch {
-      return data
-    }
   }
 
   private transition(next: LiveStreamState): void {
