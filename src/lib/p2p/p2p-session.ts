@@ -26,11 +26,14 @@ export type P2PSessionConfig = {
   devicePublicIp: string
   devicePublicPort: number
   p2pServers: P2PServer[]
-  p2pKey: Buffer          // 32-byte P2P server key
+  p2pKey: Buffer          // 32-byte P2P server key (outer encryption)
+  p2pLinkKey: Buffer      // 32-byte P2P link key (inner PLAY_REQUEST encryption)
+  p2pKeyVersion: number   // P2P key version (e.g. 101)
   p2pKeySaltIndex: number
   p2pKeySaltVer: number
   sessionToken: string    // JWT client session
   userId: string
+  clientId: number        // Client ID for expand header
   channelNo: number
   streamType: number      // 0=main, 1=sub
   streamTokens: string[]  // Stream auth tokens from /api/user/token/get
@@ -141,80 +144,55 @@ export class P2PSession extends EventEmitter {
   // -- P2P Server Contact --
 
   private async contactP2PServers(): Promise<void> {
+    // Send TEARDOWN first to clear any stale link state (the native app does this)
+    const teardown = this.buildTeardownRequest()
+    for (const server of this.config.p2pServers) {
+      this.sendTo(teardown, server.port, server.host)
+    }
+    await delay(500)
+
+    // Then send PLAY_REQUEST
     const msg = this.buildP2PServerRequest()
     for (const server of this.config.p2pServers) {
       this.sendTo(msg, server.port, server.host)
     }
-    // Wait briefly for P2P server responses
-    await delay(500)
+    await delay(2000)
   }
 
   private buildP2PServerRequest(): Buffer {
     // Build V3 TRANSFOR_DATA (0x0b04) for P2P servers.
     //
-    // From Ghidra decompilation of ComposeTransfor + ComposeMsgBody:
-    // The body contains two outer TLV attributes:
-    //   tag=0x00: ComposeTransfor output (sub-TLVs for routing/connection info)
-    //   tag=0x07: Full serialized body (2-byte length since is2BLen=true)
+    // Structure (from Ghidra RE of ComposeTransfor + ComposeMsgBody + BuildSendMsg):
     //
-    // ComposeTransfor writes these sub-TLVs:
-    //   0x71: 1B busType flag (from tag_V3Transfor[0])
-    //   0x72: 1B flag (from tag_V3Transfor[1])
-    //   0x75: 1B flag (from tag_V3Transfor[2])
-    //   0x7f: 1B flag (from tag_V3Transfor[3])
-    //   0x74: string "IP:port" (local/device address)
-    //   0x73: string "IP:port" (backup address)
-    //   0x8c: 4B big-endian int (session/routing value)
+    // Outer body = routing header (11B) + tag=0x07 (inner V3 message)
+    // Inner V3 = 12B header + 48B expand header + AES-encrypted PLAY_REQUEST body
     //
-    // BuildTransMsg adds to the attribute struct:
-    //   offset 0x18: userId string
-    //   offset 0x30: device serial or hardware code
-    //   offset 0x60: session token/body string
+    // The routing header contains the device serial fragment and is static.
+    // tag=0x07 uses 2-byte big-endian length.
+    //
+    // Inner V3 header: magic=0xe2, mask=0xde (encrypt+expandHdr+is2BLen),
+    //   msgType=0x0c02 (PLAY_REQUEST), reserved=0x6234
+    //
+    // Expand header (48 bytes): tag=0x00 (keyVer), tag=0x01 (userId),
+    //   tag=0x02 (clientId), tag=0x03 (channel)
+    //
+    // PLAY_REQUEST body (AES-128-CBC encrypted with P2PLinkKey, IV="01234567\0\0\0\0\0\0\0\0"):
+    //   tag=0x76 busType, tag=0x05 sessionKey, tag=0x78 streamType,
+    //   tag=0x77 channel, tag=0x7e streamSession, tag=0x7d value,
+    //   tag=0x7a startTime, tag=0x7b stopTime, tag=0x83 serial,
+    //   tag=0xb2 UUID, tag=0xb3 timestamp
 
-    // Use templated body from fresh pcap capture.
-    // Structure (186 bytes):
-    //   0-19:   routing header (static, contains serial fragment)
-    //   20-21:  V3 seq number (dynamic)
-    //   22-29:  protocol/key version (static)
-    //   30-63:  tag 0x01 userId (dynamic)
-    //   64-69:  tag 0x02 counter (dynamic)
-    //   70-73:  tag 0x03 channel (dynamic)
-    //   74-185: crypto/token session data (from pcap, session-bound)
-    const rawBody = Buffer.from(
-      '30387e000c07050e3336370700ace2de0c020000' +
-      '0000' +             // 20-21: seq placeholder
-      '62343cf600020065' + // 22-29: version
-      '0120' +             // 30-31: tag 0x01 len=32
-      '6663666165633930613535663461363162346537323131313532613264383035' +
-      '0204' +             // 64-65: tag 0x02 len=4
-      '00000000' +         // 66-69: counter placeholder
-      '0302' +             // 70-71: tag 0x03 len=2
-      '0001' +             // 72-73: channel placeholder
-      'b6c595bf4682311f3846e447233c6513' +
-      '6796570008d6a3391a85e2dd41088fa9' +
-      '431361d333af126fa42bee42a0b03d45' +
-      'a26f11fe472df298520f18cefa5aeee3' +
-      'aa9a8091eaa6dcc5ef0baba2c88d0150' +
-      '7b97f7fd6b9f4017b02761df725bba74' +
-      '789b9d4bd303e595800ec2708a3120d8',
-      'hex',
-    )
+    const innerBody = this.buildPlayRequestBody()
+    const innerV3 = this.buildInnerV3Message(innerBody)
+    const outerBody = this.buildOuterBody(innerV3)
 
-    // Substitute dynamic fields
-    rawBody.writeUInt16BE(this.seqNum & 0xffff, 20)
-    rawBody.writeUInt32BE(timestamp32(), 66)
-    rawBody.writeUInt16BE(this.config.channelNo, 72)
-    if (this.config.userId.length === 32) {
-      Buffer.from(this.config.userId, 'ascii').copy(rawBody, 32)
-    }
+    // AES-128-CBC encrypt outer body with P2PServerKey
+    const outerKey = this.config.p2pKey.subarray(0, 16)
+    const outerIv = Buffer.alloc(16)
+    const outerCipher = createCipheriv('aes-128-cbc', outerKey, outerIv)
+    const encrypted = Buffer.concat([outerCipher.update(outerBody), outerCipher.final()])
 
-    // AES-128-CBC encrypt
-    const aesKey = this.config.p2pKey.subarray(0, 16)
-    const iv = Buffer.alloc(16)
-    const cipher = createCipheriv('aes-128-cbc', aesKey, iv)
-    const encrypted = Buffer.concat([cipher.update(rawBody), cipher.final()])
-
-    // Build V3 header
+    // Build outer V3 header
     const seq = ++this.seqNum
     const mask = 0xda // encrypt=1, saltVer=1, saltIdx=3, expandHdr=0, is2BLen=1
     const header = Buffer.alloc(12)
@@ -228,7 +206,196 @@ export class P2PSession extends EventEmitter {
 
     const full = Buffer.concat([header, encrypted])
     full[11] = crc8(full)
+    return full
+  }
 
+  // -- Inner Body Builders --
+
+  private buildPlayRequestBody(): Buffer {
+    const serial = this.config.deviceSerial
+    const b64Serial = Buffer.from(serial).toString('base64')
+    const now = new Date()
+    const dateStr = now.getFullYear().toString()
+      + String(now.getMonth() + 1).padStart(2, '0')
+      + String(now.getDate()).padStart(2, '0')
+      + String(now.getHours()).padStart(2, '0')
+      + String(now.getMinutes()).padStart(2, '0')
+      + String(now.getSeconds()).padStart(2, '0')
+    const rand5 = String(Math.floor(10000 + Math.random() * 90000))
+    const sessionKey = b64Serial + String(this.config.channelNo) + dateStr + rand5
+
+    // Format timestamps
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+    const startTime = `${todayStr}T00:00:00`
+    const nowTime = `${todayStr}T${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`
+
+    // Build TLV attributes for PLAY_REQUEST (0x0c02)
+    const attrs: Buffer[] = []
+    const writeTlv = (tag: number, value: Buffer) => {
+      const hdr = Buffer.alloc(2)
+      hdr[0] = tag
+      hdr[1] = value.length
+      attrs.push(hdr, value)
+    }
+
+    writeTlv(0x76, Buffer.from([0x01]))                          // busType=1 (live preview)
+    writeTlv(0x05, Buffer.from(sessionKey))                      // session key
+    writeTlv(0x78, Buffer.from([this.config.streamType]))        // streamType
+    writeTlv(0x77, (() => { const b = Buffer.alloc(2); b.writeUInt16BE(this.config.channelNo); return b })())
+    writeTlv(0x7e, (() => { const b = Buffer.alloc(4); b.writeUInt32BE(this.sessionCounter + 1); return b })())
+    writeTlv(0x7d, (() => { const b = Buffer.alloc(4); b.writeUInt32BE(180); return b })())
+    writeTlv(0x7a, Buffer.from(startTime))                       // start time
+    writeTlv(0x7b, Buffer.from(nowTime))                         // stop time
+    writeTlv(0x83, Buffer.from(serial))                          // device serial
+    writeTlv(0xb2, Buffer.from(`${Date.now().toString(16)}-0000-0000-0000-000000000000`)) // session ID
+    writeTlv(0xb3, Buffer.from(String(Date.now())))              // timestamp ms
+
+    return Buffer.concat(attrs)
+  }
+
+  private buildInnerV3Message(playRequestBody: Buffer): Buffer {
+    // Encrypt PLAY_REQUEST body with P2PLinkKey
+    const linkKey = this.config.p2pLinkKey.subarray(0, 16)
+    const innerIv = Buffer.from('30313233343536370000000000000000', 'hex') // "01234567" + zeros
+    const innerCipher = createCipheriv('aes-128-cbc', linkKey, innerIv)
+    const encryptedBody = Buffer.concat([innerCipher.update(playRequestBody), innerCipher.final()])
+
+    // Build expand header: keyVersion, userId, clientId, channel
+    const expandAttrs: Buffer[] = []
+    const writeTlv = (tag: number, value: Buffer) => {
+      expandAttrs.push(Buffer.from([tag, value.length]), value)
+    }
+    const keyVerBuf = Buffer.alloc(2)
+    keyVerBuf.writeUInt16BE(this.config.p2pKeyVersion)
+    writeTlv(0x00, keyVerBuf)                                     // key version
+    writeTlv(0x01, Buffer.from(this.config.userId))               // userId (32 ASCII hex chars)
+    const clientIdBuf = Buffer.alloc(4)
+    clientIdBuf.writeUInt32BE(this.config.clientId)
+    writeTlv(0x02, clientIdBuf)                                   // client ID
+    const channelBuf = Buffer.alloc(2)
+    channelBuf.writeUInt16BE(this.config.channelNo)
+    writeTlv(0x03, channelBuf)                                    // channel
+
+    const expandHeader = Buffer.concat(expandAttrs)
+    const headerLen = 12 + expandHeader.length
+
+    // Build inner V3 header
+    const innerSeq = ++this.seqNum
+    const innerHeader = Buffer.alloc(12)
+    innerHeader[0] = 0xe2
+    innerHeader[1] = 0xde // encrypt=1, saltVer=1, saltIdx=3, expandHdr=1, is2BLen=1
+    innerHeader.writeUInt16BE(0x0c02, 2) // PLAY_REQUEST (handles both live + playback)
+    innerHeader.writeUInt32BE(innerSeq, 4)
+    innerHeader.writeUInt16BE(0x6234, 8) // reserved
+    innerHeader[10] = headerLen
+    innerHeader[11] = 0x00 // CRC placeholder
+
+    const innerFull = Buffer.concat([innerHeader, expandHeader, encryptedBody])
+    innerFull[11] = crc8(innerFull)
+    return innerFull
+  }
+
+  private buildOuterBody(innerV3: Buffer): Buffer {
+    // Routing header (11 bytes) — contains serial fragment, static structure
+    // From pcap analysis: the first 11 bytes are consistent across sessions
+    const serial = this.config.deviceSerial
+    const serialEnd = serial.slice(-3) // Last 3 chars of serial
+    const routing = Buffer.from('30387e000c07050e', 'hex')
+    const routingWithSerial = Buffer.concat([routing, Buffer.from(serialEnd)])
+
+    // tag=0x07 with 2-byte BE length (inner V3 message as value)
+    const tag07header = Buffer.alloc(3)
+    tag07header[0] = 0x07
+    tag07header.writeUInt16BE(innerV3.length, 1)
+
+    return Buffer.concat([routingWithSerial, tag07header, innerV3])
+  }
+
+  private buildTeardownRequest(): Buffer {
+    // Build TEARDOWN (0x0c04) wrapped in TRANSFOR_DATA, same structure as PLAY_REQUEST
+    // TEARDOWN attributes: 0x05 (sessionKey), 0x76 (busType), 0x77 (channel), 0x78 (streamType), 0x84 (deviceSession=0)
+    const serial = this.config.deviceSerial
+    const b64Serial = Buffer.from(serial).toString('base64')
+    const now = new Date()
+    const dateStr = now.getFullYear().toString()
+      + String(now.getMonth() + 1).padStart(2, '0')
+      + String(now.getDate()).padStart(2, '0')
+      + String(now.getHours()).padStart(2, '0')
+      + String(now.getMinutes()).padStart(2, '0')
+      + String(now.getSeconds()).padStart(2, '0')
+    const rand5 = String(Math.floor(10000 + Math.random() * 90000))
+    const sessionKey = b64Serial + String(this.config.channelNo) + dateStr + rand5
+
+    const attrs: Buffer[] = []
+    const writeTlv = (tag: number, value: Buffer) => {
+      attrs.push(Buffer.from([tag, value.length]), value)
+    }
+    writeTlv(0x05, Buffer.from(sessionKey))
+    writeTlv(0x76, Buffer.from([0x01]))  // busType=1 (preview)
+    writeTlv(0x77, (() => { const b = Buffer.alloc(2); b.writeUInt16BE(this.config.channelNo); return b })())
+    writeTlv(0x78, Buffer.from([this.config.streamType]))
+    writeTlv(0x84, Buffer.alloc(4))  // deviceSession=0
+
+    const teardownBody = Buffer.concat(attrs)
+
+    // Encrypt with P2PLinkKey
+    const linkKey = this.config.p2pLinkKey.subarray(0, 16)
+    const innerIv = Buffer.from('30313233343536370000000000000000', 'hex')
+    const innerCipher = createCipheriv('aes-128-cbc', linkKey, innerIv)
+    const encryptedBody = Buffer.concat([innerCipher.update(teardownBody), innerCipher.final()])
+
+    // Build expand header
+    const expandAttrs: Buffer[] = []
+    const writeExpTlv = (tag: number, value: Buffer) => {
+      expandAttrs.push(Buffer.from([tag, value.length]), value)
+    }
+    const keyVerBuf = Buffer.alloc(2)
+    keyVerBuf.writeUInt16BE(this.config.p2pKeyVersion)
+    writeExpTlv(0x00, keyVerBuf)
+    writeExpTlv(0x01, Buffer.from(this.config.userId))
+    const clientIdBuf = Buffer.alloc(4)
+    clientIdBuf.writeUInt32BE(this.config.clientId)
+    writeExpTlv(0x02, clientIdBuf)
+    const channelBuf = Buffer.alloc(2)
+    channelBuf.writeUInt16BE(this.config.channelNo)
+    writeExpTlv(0x03, channelBuf)
+
+    const expandHeader = Buffer.concat(expandAttrs)
+    const headerLen = 12 + expandHeader.length
+
+    // Inner V3 header with TEARDOWN opcode
+    const innerSeq = ++this.seqNum
+    const innerHeader = Buffer.alloc(12)
+    innerHeader[0] = 0xe2
+    innerHeader[1] = 0xde
+    innerHeader.writeUInt16BE(0x0c04, 2) // TEARDOWN
+    innerHeader.writeUInt32BE(innerSeq, 4)
+    innerHeader.writeUInt16BE(0x6234, 8)
+    innerHeader[10] = headerLen
+    innerHeader[11] = 0x00
+
+    const innerFull = Buffer.concat([innerHeader, expandHeader, encryptedBody])
+    innerFull[11] = crc8(innerFull)
+
+    // Wrap in outer TRANSFOR_DATA
+    const outerBody = this.buildOuterBody(innerFull)
+    const outerKey = this.config.p2pKey.subarray(0, 16)
+    const outerIv = Buffer.alloc(16)
+    const outerCipher = createCipheriv('aes-128-cbc', outerKey, outerIv)
+    const encrypted = Buffer.concat([outerCipher.update(outerBody), outerCipher.final()])
+
+    const seq = ++this.seqNum
+    const header = Buffer.alloc(12)
+    header[0] = 0xe2
+    header[1] = 0xda
+    header.writeUInt16BE(Opcode.TRANSFOR_DATA, 2)
+    header.writeUInt32BE(seq, 4)
+    header.writeUInt16BE(0x6234, 8)
+    header[10] = 0x0c
+    header[11] = 0x00
+
+    const full = Buffer.concat([header, encrypted])
+    full[11] = crc8(full)
     return full
   }
 
