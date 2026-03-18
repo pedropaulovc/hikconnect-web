@@ -4,17 +4,22 @@ description: Deferred work items for P2P/VTM streaming — updated after P2P_SET
 type: project
 ---
 
-## Deferred Streaming Work (updated 2026-03-18)
+## Deferred Streaming Work (updated 2026-03-17, with iVMS-4200 Ghidra findings)
 
 ### Critical — Next Steps to Video
 
-1. **Handle device 0x0C00 response** — Device sends cmd=0x0C00 (PREVIEW_RSP) with echoed session key after P2P_SETUP. Need to acknowledge this and transition to the data session phase. The device sends these repeatedly, likely expecting a response.
+1. **Complete hole-punch handshake (0x0C00 → 0x0C01)** — The device sends 0x0C00 (punch request, NOT "PREVIEW_RSP" as we thought) after P2P_SETUP. The native client (`CCasP2PClient::HandlePunchReqPackage`) responds by:
+   - Verifying session UUID matches
+   - Adopting the device's socket if mismatch (close old, use new)
+   - **Sending punch response 10 times** via `FUN_180041bb0` to device IP:port
+   - Setting "p2p connection established" flag
+   - **Action:** When we receive 0x0C00, send back a 0x0C01 punch response (10x) to the device's source address. The punch response is a V3 message with cmd=0x0C01, same session key.
 
-2. **Fix PLAY_REQUEST delivery** — PLAY_REQUEST wrapped in TRANSFOR_DATA still gets "Link status invalid" from P2P server. Three hypotheses:
-   - (a) PLAY_REQUEST should be sent directly to the DEVICE (not P2P server) after P2P_SETUP establishes the tunnel
-   - (b) PLAY_REQUEST needs to come from the SAME socket as the device's 0x0C00 packets (the device is already talking to us)
-   - (c) The P2P server needs the PLAY_REQUEST to reference a valid deviceSessionId from a prior 0x0B05 response
-   - Test by capturing the FULL emulator flow to see where PLAY_REQUEST is sent relative to device connection
+2. **Send PLAY_REQUEST via punched socket** — After hole-punch completes (0x0C00/0x0C01 exchange), the native code (`CP2PV3Client::SendRequest`) sends PLAY_REQUEST via **two paths**:
+   - Path A: Directly to device via the punched UDP socket (or SRT/UDT socket)
+   - Path B: Via TRANSFOR_DATA (0x0B04) relay through P2P server
+   - Response can come from either path
+   - **Action:** Send PLAY_REQUEST directly to device IP:port from the 0x0C00 packet, using the same socket. Also send via TRANSFOR_DATA as fallback. Note: native code uses SRT (srt.dll) for the direct path, but raw UDP may work for initial testing.
 
 3. **Data session establishment (0x7534 + 0x8000)** — After PLAY_REQUEST succeeds, exchange session setup (0x7534) and connection control (0x8000) packets with the device to establish the data channel.
 
@@ -34,11 +39,18 @@ type: project
 
 ### Important — Hardcoded Values
 
-10. **P2PServerKey source** — Captured via Frida (`e4465f2d...`). Stable per account, from GrayConfig via `setP2PV3ConfigInfo`. Need to find the API endpoint that provides this key.
+10. **P2PServerKey source** — Captured via Frida (`e4465f2d...`). Stable per account. From iVMS-4200 RE: key comes from `CGlobalInfo::SetP2PV3ConfigInfo` (global config). Likely from `/api/sdk/p2p/user/info/get` or equivalent consumer endpoint. Key has 2 version bytes. Error "P2PServer KeyInfo is invalid, maybe not init KEYINFO" if not initialized.
 
-11. **clientId source** — Hardcoded 0x0aed13f5 from capture. From `CGlobalInfo::GetClientId()`. Need to find API source or derivation method.
+11. **clientId source** — Hardcoded 0x0aed13f5 from capture. From iVMS-4200 RE: sent as tag `0x8C` (4B BE) in the P2P_SETUP sub-TLV container. Comes from `CGlobalInfo::GetClientId()`. Likely from `/api/sdk/p2p/user/info/get`.
 
-12. **ComposeTransfor sub-TLV values** — Values 0x72=3, 0x75=1, 0x7f=0x0a captured from emulator. These may differ per NAT type or device. The 0x7f value (0x0a=10) doesn't match standard NAT types (0-8) — may be a composite or different enum.
+12. **ComposeTransfor sub-TLV values** — **RESOLVED from iVMS-4200 RE.** Full sub-TLV structure at tag=0xFF:
+    - `0x71` ('q'): client NAT type (from `CStunInfoMgr::GetClientNatType`)
+    - `0x72` ('r'): protocol/relay flag
+    - `0x75` ('u'): support flags
+    - `0x7F`: NAT subtype / mobile network type (0x0a may mean "unknown/not applicable")
+    - `0x74` ('t'): client reflexive IP:port (STUN-discovered, optional)
+    - `0x73` ('s'): client local IP:port (optional)
+    - `0x8C`: clientId (4B BE)
 
 ### Important — Integration
 

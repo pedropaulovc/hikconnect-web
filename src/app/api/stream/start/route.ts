@@ -29,16 +29,20 @@ export async function POST(req: Request) {
     // Parse P2P key from hex-encoded secret key
     const p2pKey = Buffer.from(p2pConfig.secretKey, 'hex')
 
+    const p2pLinkKey = Buffer.from(p2pConfig.secretKey.substring(0, 32), 'ascii')
     const stream = new LiveStream({
       deviceSerial,
       deviceIp: p2pConfig.connection.netIp || p2pConfig.connection.wanIp,
       devicePort: p2pConfig.connection.netStreamPort || 9020,
       p2pServers: p2pConfig.servers.map(s => ({ host: s.ip, port: s.port })),
       p2pKey,
+      p2pLinkKey,
+      p2pKeyVersion: p2pConfig.keyVersion || 101,
       p2pKeySaltIndex: 3,
       p2pKeySaltVer: 1,
       sessionToken: client.getSession()!.sessionId,
       userId: '', // TODO: extract from session JWT
+      clientId: 0x0aed13f5, // TODO: fetch from API
       channelNo: channel,
       streamType,
       verificationCode,

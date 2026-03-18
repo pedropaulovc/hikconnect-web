@@ -22,6 +22,10 @@ export type LiveStreamConfig = {
   p2pServers: P2PServer[]
   /** P2P encryption key (32 bytes) */
   p2pKey: Buffer
+  /** P2P link key (32 bytes, for inner PLAY_REQUEST encryption) */
+  p2pLinkKey: Buffer
+  /** P2P key version */
+  p2pKeyVersion: number
   /** P2P key salt index */
   p2pKeySaltIndex: number
   /** P2P key salt version */
@@ -30,6 +34,8 @@ export type LiveStreamConfig = {
   sessionToken: string
   /** User ID */
   userId: string
+  /** Client ID for P2P protocol */
+  clientId: number
   /** Channel number (1-based) */
   channelNo: number
   /** Stream type: 0=main, 1=sub */
@@ -85,10 +91,13 @@ export class LiveStream extends EventEmitter {
         devicePublicPort: this.config.devicePort,
         p2pServers: this.config.p2pServers,
         p2pKey: this.config.p2pKey,
+        p2pLinkKey: this.config.p2pLinkKey,
+        p2pKeyVersion: this.config.p2pKeyVersion,
         p2pKeySaltIndex: this.config.p2pKeySaltIndex,
         p2pKeySaltVer: this.config.p2pKeySaltVer,
         sessionToken: this.config.sessionToken,
         userId: this.config.userId,
+        clientId: this.config.clientId,
         channelNo: this.config.channelNo,
         streamType: this.config.streamType,
         streamTokens: [],

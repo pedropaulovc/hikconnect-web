@@ -27,16 +27,20 @@ async function main() {
   const tokens = tokenData.tokenArray || []
   console.log(`Got ${tokens.length} stream tokens`)
 
+  const p2pLinkKey = Buffer.from(p2p.secretKey.substring(0, 32), 'ascii')
   const p2pSession = new P2PSession({
     deviceSerial: 'L38239367',
     devicePublicIp: p2p.connection.netIp || p2p.connection.wanIp,
     devicePublicPort: p2p.connection.netStreamPort || 9020,
     p2pServers: p2p.servers.map(s => ({ host: s.ip, port: s.port })),
     p2pKey: P2P_SERVER_KEY,
+    p2pLinkKey,
+    p2pKeyVersion: p2p.keyVersion || 101,
     p2pKeySaltIndex: 3,
     p2pKeySaltVer: 1,
     sessionToken: session.sessionId,
     userId: 'fcfaec90a55f4a61b4e7211152a2d805',
+    clientId: 0x0aed13f5,
     channelNo: 1,
     streamType: 1,
     streamTokens: tokens,
