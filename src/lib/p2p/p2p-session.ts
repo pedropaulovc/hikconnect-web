@@ -149,6 +149,11 @@ export class P2PSession extends EventEmitter {
   stop(): void {
     if (this.state === 'stopped') return
 
+    // Send TEARDOWN (0x0C04) to cleanly release the device session
+    if (this.socket && this.dataSessionId !== 0) {
+      try { this.sendTeardown() } catch {}
+    }
+
     // Send SRT shutdown to cleanly release the device's stream slot
     if (this.srtPeerSocketId) {
       const shutdown = Buffer.alloc(16)
@@ -166,9 +171,13 @@ export class P2PSession extends EventEmitter {
       this.keepaliveInterval = null
     }
 
-    this.socket?.close()
+    // Defer socket close to let queued UDP sends (TEARDOWN, SRT shutdown) flush
+    const sock = this.socket
     this.socket = null
     this.transition('stopped')
+    if (sock) {
+      setImmediate(() => { try { sock.close() } catch {} })
+    }
   }
 
   // -- P2P Server Contact --
@@ -214,6 +223,61 @@ export class P2PSession extends EventEmitter {
     }
 
     await delay(3000)
+  }
+
+  private sendTeardown(): void {
+    const teardownBody = this.buildTeardownBody()
+    const innerV3 = this.buildInnerV3Message(teardownBody, Opcode.TEARDOWN)
+
+    // Path A: Send directly to device
+    if (this.devicePeerIp && this.devicePeerPort) {
+      this.sendTo(innerV3, this.devicePeerPort, this.devicePeerIp)
+    }
+
+    // Path B: Send via P2P server relay (TRANSFOR_DATA wrapper)
+    const outerBody = this.buildOuterBody(innerV3)
+    const outerKey = this.config.p2pKey.subarray(0, 16)
+    const outerCipher = createCipheriv('aes-128-cbc', outerKey, HIK_AES_IV)
+    const encrypted = Buffer.concat([outerCipher.update(outerBody), outerCipher.final()])
+
+    const seq = ++this.seqNum
+    const mask = 0xda
+    const header = Buffer.alloc(12)
+    header[0] = 0xe2
+    header[1] = mask
+    header.writeUInt16BE(Opcode.TRANSFOR_DATA, 2)
+    header.writeUInt32BE(seq, 4)
+    header.writeUInt16BE(0x6234, 8)
+    header[10] = 0x0c
+    header[11] = 0x00
+    const full = Buffer.concat([header, encrypted])
+    full[11] = crc8(full)
+
+    for (const server of this.config.p2pServers) {
+      this.sendTo(full, server.port, server.host)
+    }
+  }
+
+  private buildTeardownBody(): Buffer {
+    const attrs: Buffer[] = []
+    const writeTlv = (tag: number, value: Buffer) => {
+      const hdr = Buffer.alloc(2)
+      hdr[0] = tag
+      hdr[1] = value.length
+      attrs.push(hdr, value)
+    }
+
+    writeTlv(0x05, Buffer.from(this.currentSessionKey))
+    writeTlv(0x76, Buffer.from([this.config.busType ?? 1]))
+    const channelBuf = Buffer.alloc(2)
+    channelBuf.writeUInt16BE(this.config.channelNo)
+    writeTlv(0x77, channelBuf)
+    writeTlv(0x78, Buffer.from([this.config.streamType]))
+    const sessionBuf = Buffer.alloc(4)
+    sessionBuf.writeUInt32BE(this.dataSessionId)
+    writeTlv(0x84, sessionBuf)
+
+    return Buffer.concat(attrs)
   }
 
   private waitForPunch(timeoutMs: number): Promise<void> {
@@ -413,8 +477,8 @@ export class P2PSession extends EventEmitter {
     return Buffer.concat(attrs)
   }
 
-  private buildInnerV3Message(playRequestBody: Buffer): Buffer {
-    // Encrypt PLAY_REQUEST body with P2PLinkKey
+  private buildInnerV3Message(playRequestBody: Buffer, opcode: number = Opcode.PLAY_REQUEST): Buffer {
+    // Encrypt body with P2PLinkKey
     const linkKey = this.config.p2pLinkKey.subarray(0, 16)
     const innerIv = HIK_AES_IV
     const innerCipher = createCipheriv('aes-128-cbc', linkKey, innerIv)
@@ -444,7 +508,7 @@ export class P2PSession extends EventEmitter {
     const innerHeader = Buffer.alloc(12)
     innerHeader[0] = 0xe2
     innerHeader[1] = 0xde // encrypt=1, saltVer=1, saltIdx=3, expandHdr=1, is2BLen=1
-    innerHeader.writeUInt16BE(0x0c02, 2) // PLAY_REQUEST (handles both live + playback)
+    innerHeader.writeUInt16BE(opcode, 2)
     innerHeader.writeUInt32BE(innerSeq, 4)
     innerHeader.writeUInt16BE(0x6234, 8) // reserved
     innerHeader[10] = headerLen
