@@ -133,6 +133,13 @@ export class P2PSession extends EventEmitter {
     // VPS test confirmed: device sends 0x8000 after receiving PLAY_REQUEST.
     // handleConnectionControl() responds and establishes the data session.
     await this.waitForDataSession(15_000)
+
+    // Step 5: Send SESSION_SETUP (0x7534) with V3 0x0C00 to start video
+    // The SRT library does this internally in the native code, but since we
+    // use raw UDP, we need to do it explicitly to tell the device to start streaming.
+    if (this.dataSessionId !== 0) {
+      this.sendSessionSetup()
+    }
     this.transition('streaming')
   }
 
