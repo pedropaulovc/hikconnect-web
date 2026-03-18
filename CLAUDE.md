@@ -136,13 +136,31 @@ hcloud server create --name hikp2p --type cpx11 --location ash --image ubuntu-24
 # Cleanup: hcloud server delete hikp2p
 ```
 
-### Frida (Android emulator)
+### Android Emulator
+
+App package: `com.connect.enduser` (Hik-Connect). Always use `uiautomator dump` to find element bounds before tapping — never guess coordinates.
 
 ```bash
+# UI automation (ALWAYS dump bounds first, never guess coordinates)
+adb shell uiautomator dump /sdcard/ui.xml && adb pull /sdcard/ui.xml /tmp/ui.xml
+grep -oP 'text="[^"]*"[^>]*bounds="[^"]*"' /tmp/ui.xml   # find elements
+adb shell input tap X Y                                     # tap at bounds center
+adb shell screencap -p /sdcard/screen.png && adb pull /sdcard/screen.png /tmp/screen.png
+
+# App lifecycle
+adb shell am force-stop com.connect.enduser                 # kill app
+adb shell monkey -p com.connect.enduser -c android.intent.category.LAUNCHER 1  # launch app
+
+# Frida hooks
 frida -U -p <PID> -l scripts/frida/get-p2p-key.js        # Capture P2PServerKey
 frida -U -p <PID> -l scripts/frida/get-p2p-link-key.js   # Capture P2PLinkKey + all InitParam fields
 frida -U -p <PID> -l scripts/frida/hook-stream-broad.js   # Broad network hooks
 ```
+
+### Reference Frames
+
+`docs/re/reference-frames/` — screenshots from working clients for visual comparison with our pipeline output.
+- `lobby-live-android-2026-03-18.png` — Lobby camera live view from Android app (single-camera mode)
 
 ## Environment
 
@@ -169,6 +187,7 @@ All protocol documentation lives in `docs/re/`:
 | `stun-p2p-protocol.md` | STUN and P2P server protocol |
 | `p2p-config-source.md` | Where each config element comes from (JNI → native mapping) |
 | `jni-exports.md` | JNI function signatures and InitParam field mapping |
+| `reference-frames/` | Screenshots from working clients (Android app) for visual comparison |
 
 ### Key Protocol Constants
 

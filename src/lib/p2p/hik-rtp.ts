@@ -4,25 +4,72 @@
  * Format (from VPS capture analysis):
  * - SRT data payload starts with 12-byte Hik-RTP header
  * - After header: 13-byte sub-frame header (0x0d + 4B + sync pattern a7 6d 4e 7e 55 66 77 88)
- * - After sub-header: NAL unit data (plaintext)
+ * - After sub-header: NAL unit data
  *   - VPS/SPS/PPS (NAL types 32-34): parameter sets
  *   - Slice data (NAL types 0-21): video frames
  *   - Length-prefixed frames (0x00 0x01/0x02 + 2B length): SPS info
  *
- * Video data is plaintext by default. AES encryption only applies when
- * "stream encryption" is explicitly enabled in device settings (optional NVR feature).
- * iVMS-4200 and Hik-Connect mobile apps stream without any verification code.
+ * Encryption (from Ghidra RE of libPlayCtrl.so IDMXAESDecryptFrame):
+ * - NAL type 49 = Hikvision encrypted NAL wrapper
+ * - Key = MD5(verification_code), e.g. MD5("ABCDEF") for default code
+ * - For H.265: AES-128-ECB, only first 16 bytes of NAL body decrypted (partial encryption)
+ * - After decryption, the original NAL header is restored from the decrypted bytes
  */
 
 import { EventEmitter } from 'node:events'
+import { createHash, createDecipheriv } from 'node:crypto'
 
 const HIK_RTP_HEADER_LEN = 12
 // SUB_HEADER_SYNC varies per session — not used for matching anymore
 const SUB_HEADER_LEN = 13 // 0x0d + 4 bytes + 8 bytes sync
 const ANNEX_B_START_CODE = Buffer.from([0x00, 0x00, 0x00, 0x01])
+const HIK_ENCRYPTED_NAL_TYPE = 49
+
+function deriveAesKey(verificationCode: string): Buffer {
+  return createHash('md5').update(verificationCode).digest()
+}
+
+/**
+ * Decrypt a Hikvision type-49 encrypted NAL unit.
+ * Per IDMXAESDecryptFrame in libPlayCtrl.so: for H.265, only the first 16 bytes
+ * of the NAL body (after 2-byte HEVC NAL header) are AES-128-ECB encrypted.
+ * The decrypted bytes contain the original NAL header + initial payload.
+ */
+function decryptNal(data: Buffer, aesKey: Buffer): Buffer {
+  // Encrypted NAL structure:
+  //   [2B type-49 wrapper header] [16B encrypted block] [plaintext rest...]
+  // The encrypted block contains [2B original NAL header] [14B initial payload].
+  // After decryption, drop the type-49 wrapper and emit from byte 2 onward.
+  const WRAPPER_LEN = 2
+  const AES_BLOCK_SIZE = 16
+
+  if (data.length < WRAPPER_LEN + AES_BLOCK_SIZE) {
+    return data // too short to decrypt
+  }
+
+  const result = Buffer.from(data)
+
+  // Decrypt first 16 bytes after the wrapper header, in-place
+  const encryptedBlock = result.subarray(WRAPPER_LEN, WRAPPER_LEN + AES_BLOCK_SIZE)
+  const decipher = createDecipheriv('aes-128-ecb', aesKey, null)
+  decipher.setAutoPadding(false)
+  const decrypted = decipher.update(encryptedBlock)
+  decrypted.copy(result, WRAPPER_LEN)
+
+  // Return from byte 2 onward: [original_hdr(2)] [decrypted_data(14)] [plaintext_rest...]
+  return result.subarray(WRAPPER_LEN)
+}
 
 export class HikRtpExtractor extends EventEmitter {
   private nalCount = 0
+  private aesKey: Buffer | null = null
+
+  constructor(verificationCode?: string) {
+    super()
+    if (verificationCode) {
+      this.aesKey = deriveAesKey(verificationCode)
+    }
+  }
 
   /**
    * Process a raw SRT data payload (the 'data' event from P2PSession).
@@ -82,8 +129,14 @@ export class HikRtpExtractor extends EventEmitter {
       return
     }
 
+    // NAL type 49: Hikvision encrypted NAL — decrypt if key available
+    if (nalType === HIK_ENCRYPTED_NAL_TYPE && this.aesKey) {
+      const decrypted = decryptNal(data, this.aesKey)
+      this.emitNal(decrypted)
+      return
+    }
+
     // Hikvision custom NAL types (48-63 range): pass through
-    // FFmpeg may skip these but they don't corrupt the stream
     if (nalType >= 48) {
       this.emitNal(data)
       return

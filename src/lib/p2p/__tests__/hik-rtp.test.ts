@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
+import { createHash, createCipheriv } from 'node:crypto'
 import { HikRtpExtractor } from '../hik-rtp'
 
 describe('HikRtpExtractor', () => {
@@ -84,5 +85,95 @@ describe('HikRtpExtractor', () => {
     // Should emit the 4-byte VPS data with start code
     expect(nals[0].length).toBe(4 + 4) // 4 start code + 4 data
     expect((nals[0][4] >> 1) & 0x3f).toBe(32) // VPS
+  })
+
+  describe('NAL type 49 decryption', () => {
+    const VERIFICATION_CODE = 'ABCDEF'
+    const aesKey = createHash('md5').update(VERIFICATION_CODE).digest()
+
+    function encryptBlock(plaintext: Buffer): Buffer {
+      const cipher = createCipheriv('aes-128-ecb', aesKey, null)
+      cipher.setAutoPadding(false)
+      return Buffer.concat([cipher.update(plaintext), cipher.final()])
+    }
+
+    function buildEncryptedNalPacket(originalNalBody: Buffer): Buffer {
+      // Build a type-49 wrapped NAL:
+      // [2B type-49 header 0x62 0x01] [16B encrypted(orig_hdr + data)] [plaintext rest]
+      const type49Header = Buffer.from([0x62, 0x01]) // NAL type 49
+      const bodyToEncrypt = originalNalBody.subarray(0, 16)
+      const plaintextRest = originalNalBody.subarray(16)
+      const encrypted = encryptBlock(bodyToEncrypt)
+      const nal = Buffer.concat([type49Header, encrypted, plaintextRest])
+
+      // Wrap in Hik-RTP: [12B header] [NAL data]
+      const packet = Buffer.alloc(12 + nal.length)
+      packet.writeUInt16BE(0x8060, 0)
+      nal.copy(packet, 12)
+      return packet
+    }
+
+    it('decrypts NAL type 49 to restore original NAL type', () => {
+      const extractor = new HikRtpExtractor(VERIFICATION_CODE)
+      const nals: Buffer[] = []
+      extractor.on('nalUnit', (nal: Buffer) => nals.push(nal))
+
+      // Original NAL: type 1 (TRAIL_R) slice, 32 bytes total
+      const originalNal = Buffer.alloc(32)
+      originalNal[0] = 0x02 // NAL type 1 (TRAIL_R): (1 << 1) = 0x02
+      originalNal[1] = 0x01 // temporal_id = 1
+      originalNal.fill(0xaa, 2) // fake slice data
+
+      const packet = buildEncryptedNalPacket(originalNal)
+      extractor.processPacket(packet)
+
+      expect(nals.length).toBe(1)
+      // After Annex B start code (4 bytes), the NAL type should be restored
+      const nalType = (nals[0][4] >> 1) & 0x3f
+      expect(nalType).toBe(1) // TRAIL_R, not 49
+    })
+
+    it('decrypts first 16 bytes and preserves plaintext rest', () => {
+      const extractor = new HikRtpExtractor(VERIFICATION_CODE)
+      const nals: Buffer[] = []
+      extractor.on('nalUnit', (nal: Buffer) => nals.push(nal))
+
+      // Original NAL: 48 bytes (2B header + 46B payload)
+      const originalNal = Buffer.alloc(48)
+      originalNal[0] = 0x26 // NAL type 19 (IDR_W_RADL): (19 << 1) = 0x26
+      originalNal[1] = 0x01
+      for (let i = 2; i < 48; i++) originalNal[i] = i & 0xff
+
+      const packet = buildEncryptedNalPacket(originalNal)
+      extractor.processPacket(packet)
+
+      expect(nals.length).toBe(1)
+      const emitted = nals[0].subarray(4) // skip Annex B start code
+
+      // First 16 bytes should match original (decrypted)
+      expect(emitted.subarray(0, 16)).toEqual(originalNal.subarray(0, 16))
+      // Bytes 16+ should also match (plaintext passthrough)
+      expect(emitted.subarray(16)).toEqual(originalNal.subarray(16))
+    })
+
+    it('passes through NAL type 49 without decryption when no key', () => {
+      const extractor = new HikRtpExtractor() // no verification code
+      const nals: Buffer[] = []
+      extractor.on('nalUnit', (nal: Buffer) => nals.push(nal))
+
+      const fakeNal = Buffer.alloc(32)
+      fakeNal[0] = 0x62 // NAL type 49
+      fakeNal[1] = 0x01
+
+      const packet = Buffer.alloc(12 + 32)
+      packet.writeUInt16BE(0x8060, 0)
+      fakeNal.copy(packet, 12)
+      extractor.processPacket(packet)
+
+      expect(nals.length).toBe(1)
+      // Should still be type 49 (passed through, not decrypted)
+      const nalType = (nals[0][4] >> 1) & 0x3f
+      expect(nalType).toBe(49)
+    })
   })
 })

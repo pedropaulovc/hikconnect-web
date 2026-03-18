@@ -48,6 +48,8 @@ export type LiveStreamConfig = {
   startTime?: string
   /** Playback stop time (YYYY-MM-DDTHH:MM:SS) */
   stopTime?: string
+  /** Device verification code for video decryption (e.g. "ABCDEF") */
+  verificationCode?: string
   /** HLS output configuration */
   hls: HlsConfig
 }
@@ -110,7 +112,7 @@ export class LiveStream extends EventEmitter {
       })
 
       // Wire P2P data → HikRTP extractor → H.265 NALs → FFmpeg
-      const extractor = new HikRtpExtractor()
+      const extractor = new HikRtpExtractor(this.config.verificationCode)
       extractor.on('nalUnit', (nal: Buffer) => {
         this.bytesReceived += nal.length
         this.hlsPipe?.write(nal)
