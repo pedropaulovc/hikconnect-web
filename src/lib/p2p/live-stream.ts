@@ -10,6 +10,7 @@ import { EventEmitter } from 'node:events'
 import { createHash, createDecipheriv } from 'node:crypto'
 import { P2PSession, type P2PServer } from './p2p-session'
 import { FfmpegHlsPipe, type HlsConfig } from '../hls/ffmpeg-pipe'
+import { HikRtpExtractor } from './hik-rtp'
 
 export type LiveStreamConfig = {
   /** Device serial number */
@@ -40,6 +41,8 @@ export type LiveStreamConfig = {
   channelNo: number
   /** Stream type: 0=main, 1=sub */
   streamType: number
+  /** Server's public IP for P2P registration */
+  localPublicIp?: string
   /** Device verification code (6 chars, used for AES decryption) */
   verificationCode: string
   /** HLS output configuration */
@@ -101,10 +104,17 @@ export class LiveStream extends EventEmitter {
         channelNo: this.config.channelNo,
         streamType: this.config.streamType,
         streamTokens: [],
+        localPublicIp: this.config.localPublicIp,
       })
 
+      // Wire P2P data → HikRTP extractor → H.265 NALs → FFmpeg
+      const extractor = new HikRtpExtractor(this.config.verificationCode)
+      extractor.on('nalUnit', (nal: Buffer) => {
+        this.bytesReceived += nal.length
+        this.hlsPipe?.write(nal)
+      })
       this.p2pSession.on('data', (payload: Buffer) => {
-        this.onStreamData(payload)
+        extractor.processPacket(payload)
       })
 
       this.p2pSession.on('error', (err: Error) => {

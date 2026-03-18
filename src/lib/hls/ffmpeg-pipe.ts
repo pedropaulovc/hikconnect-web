@@ -21,6 +21,7 @@ export class FfmpegHlsPipe {
     const segDuration = this.config.segmentDuration ?? 2
 
     this.process = spawn('ffmpeg', [
+      '-f', 'hevc',             // input format: raw H.265 Annex B
       '-i', 'pipe:0',           // stdin input
       '-c:v', 'copy',           // copy video codec (no re-encode)
       '-f', 'hls',

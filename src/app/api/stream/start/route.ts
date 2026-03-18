@@ -46,6 +46,7 @@ export async function POST(req: Request) {
       channelNo: channel,
       streamType,
       verificationCode,
+      localPublicIp: process.env.PUBLIC_IP,
       hls: {
         outputDir: hlsDir,
         segmentDuration: 2,
