@@ -10,24 +10,19 @@
  *   - Length-prefixed frames (0x00 0x01/0x02 + 2B length): SPS info
  */
 
-import { createHash, createDecipheriv } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 
 const HIK_RTP_HEADER_LEN = 12
-const SUB_HEADER_SYNC = Buffer.from([0xa7, 0x6d, 0x4e, 0x7e, 0x55, 0x66, 0x77, 0x88])
+// SUB_HEADER_SYNC varies per session — not used for matching anymore
 const SUB_HEADER_LEN = 13 // 0x0d + 4 bytes + 8 bytes sync
 const ANNEX_B_START_CODE = Buffer.from([0x00, 0x00, 0x00, 0x01])
 
 export class HikRtpExtractor extends EventEmitter {
-  private aesKey: Buffer
   private nalCount = 0
-  private fragmentBuffer: Buffer[] = []
-  private inFragment = false
-  private headerSeen = false  // Skip first 0x90 (session init with IMKH header)
 
-  constructor(verificationCode: string) {
+  constructor(_verificationCode?: string) {
     super()
-    this.aesKey = createHash('md5').update(verificationCode).digest()
+    // Verification code reserved for future AES decryption of encrypted streams
   }
 
   /**
@@ -46,47 +41,20 @@ export class HikRtpExtractor extends EventEmitter {
     if (payload.length <= HIK_RTP_HEADER_LEN) return
     const rtpPayload = payload.subarray(HIK_RTP_HEADER_LEN)
 
-    // Strip 13-byte Hik-RTP sub-header (starts with 0x0d)
-    if (rtpPayload[0] !== 0x0d || rtpPayload.length <= SUB_HEADER_LEN) return
-
-    const subType = rtpPayload[1] // 0x90=first, 0x80=middle, 0xa0=last fragment
-    const nalData = rtpPayload.subarray(SUB_HEADER_LEN)
-
-    // Fragment reassembly based on sub-type byte:
-    // 0x90: first fragment of a frame (may also be complete if only one packet)
-    // 0x80: middle fragment (continuation)
-    // 0xa0: last fragment
-    // 0xd0: standalone single-packet frame?
-
-    // Fragment reassembly based on sub-type high nibble:
-    // 0x90: first fragment (starts with length-prefixed NAL or raw NAL)
-    // 0x80: middle fragment (continuation data)
-    // 0xa0: last fragment (completes the NAL)
-    const fragType = subType & 0xf0
-
-    // Pass each sub-frame's data directly to processNalUnit.
-    // Don't try fragment reassembly — FFmpeg handles H.265 stream reassembly.
-    // The earlier VPS test confirmed this produces working HLS output (2.9MB).
-    this.processNalUnit(nalData)
-  }
-
-  private processInitPacket(payload: Buffer): void {
-    // The 0x0100 packet has: Hik-RTP extended header + IMKH header + padding + initial NALs
-    // Find sub-frame headers within the packet
-    for (let i = HIK_RTP_HEADER_LEN; i < payload.length - SUB_HEADER_LEN; i++) {
-      if (payload[i] === 0x0d && payload.subarray(i + 5, i + 13).equals(SUB_HEADER_SYNC)) {
-        // Find next sub-frame header
-        let end = payload.length
-        for (let j = i + SUB_HEADER_LEN; j < payload.length - SUB_HEADER_LEN; j++) {
-          if (payload[j] === 0x0d && payload.subarray(j + 5, j + 13).equals(SUB_HEADER_SYNC)) {
-            end = j
-            break
-          }
-        }
-        const nalData = payload.subarray(i + SUB_HEADER_LEN, end)
-        this.processNalUnit(nalData)
+    // Find and strip sub-header (0x0d + 4 variable bytes + 8-byte sync pattern = 13 bytes)
+    // The sub-header typically starts at offset 0 but scan to be safe
+    let dataStart = 0
+    if (rtpPayload[0] === 0x0d && rtpPayload.length > SUB_HEADER_LEN) {
+      const subHigh = rtpPayload[1] & 0xf0
+      if (subHigh === 0x80 || subHigh === 0x90 || subHigh === 0xa0 || subHigh === 0xd0) {
+        dataStart = SUB_HEADER_LEN
       }
     }
+
+    const nalData = rtpPayload.subarray(dataStart)
+    if (nalData.length < 2) return
+
+    this.processNalUnit(nalData)
   }
 
   private processNalUnit(data: Buffer): void {
@@ -123,20 +91,6 @@ export class HikRtpExtractor extends EventEmitter {
     }
 
     // Unknown type — skip to avoid corrupting the stream
-  }
-
-  private decryptSlice(data: Buffer): Buffer {
-    // Full AES-128-ECB decryption of all complete 16-byte blocks
-    const blockSize = 16
-    if (data.length < blockSize) return data
-
-    const fullBlocks = Math.floor(data.length / blockSize) * blockSize
-    const decipher = createDecipheriv('aes-128-ecb', this.aesKey, null)
-    decipher.setAutoPadding(false)
-    const decrypted = decipher.update(data.subarray(0, fullBlocks))
-
-    if (fullBlocks === data.length) return decrypted
-    return Buffer.concat([decrypted, data.subarray(fullBlocks)])
   }
 
   private emitNal(data: Buffer): void {
