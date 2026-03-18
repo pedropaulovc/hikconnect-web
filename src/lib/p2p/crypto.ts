@@ -80,27 +80,35 @@ export function deriveSharedSecret(privateKey: Buffer, peerPublicKey: Buffer): B
 // --- ECDH Session Key Derivation (from ecdhCryption.dll RE) ---
 
 /**
- * Counter-mode KDF using AES-128-ECB.
- * From Ghidra RE of ECDHCryption_GenerateSessionKey / FUN_180016e00:
- * - Uses first 16 bytes of master key as AES key
- * - Increments a 1-byte counter for each 16-byte block
- * - Produces `length` bytes of derived key material
+ * Counter-mode KDF using AES-256-ECB.
+ * From Ghidra RE of ECDHCryption_GenerateSessionKey / FUN_180016e00 + FUN_180016a60:
+ *
+ * The KDF has two phases:
+ * Phase 1: Generate 48 bytes via AES-256-ECB counter mode with master key
+ *   - Counter at byte 15 is incremented big-endian before each AES block
+ *   - 3 blocks × 16 bytes = 48 bytes
+ *
+ * Phase 2: XOR the 48 bytes with a hash of the input, then use first 32 bytes
+ *   as new AES-256 key for the session
+ *
+ * Simplified for initial implementation: direct AES-256-ECB counter mode
+ * producing `length` bytes of session key material.
  */
 export function ecdhDeriveSessionKey(masterKey: Buffer, length: number): Buffer {
-  const aesKey = masterKey.subarray(0, 16)
   const blocks: Buffer[] = []
   let remaining = length
 
-  // The counter block is 16 bytes, last byte is the counter
+  // Counter block is 16 bytes, counter at byte 15 incremented before each use
   const counterBlock = Buffer.alloc(16)
-  let counter = 1 // Counter starts at 1 (incremented before first use in native code)
+  let counter = 1
 
   while (remaining > 0) {
+    // Increment counter (big-endian, starting from byte 15)
     counterBlock[15] = counter & 0xff
     counter++
 
-    // AES-128-ECB: encrypt the counter block with the master key
-    const cipher = createCipheriv('aes-128-ecb', aesKey, null)
+    // AES-256-ECB: encrypt the counter block with the full 32-byte master key
+    const cipher = createCipheriv('aes-256-ecb', masterKey, null)
     cipher.setAutoPadding(false)
     const block = cipher.update(counterBlock)
 
@@ -141,13 +149,12 @@ export function buildEcdhReqPacket(opts: {
   const { sessionKey, masterKey, clientPublicKey, channelId, body, seqNum = 1 } = opts
   const bodyLen = body?.length ?? 0
 
-  // Encrypt the master key with session key using AES-128-ECB
-  const encKey = sessionKey.subarray(0, 16)
-  const cipher1 = createCipheriv('aes-128-ecb', encKey, null)
+  // Encrypt the master key with session key using AES-256-ECB (from Ghidra: param_3 = 0x100)
+  const cipher1 = createCipheriv('aes-256-ecb', sessionKey, null)
   cipher1.setAutoPadding(false)
   const encMasterPart1 = cipher1.update(masterKey.subarray(0, 16))
 
-  const cipher2 = createCipheriv('aes-128-ecb', encKey, null)
+  const cipher2 = createCipheriv('aes-256-ecb', sessionKey, null)
   cipher2.setAutoPadding(false)
   const encMasterPart2 = cipher2.update(masterKey.subarray(16, 32))
 
