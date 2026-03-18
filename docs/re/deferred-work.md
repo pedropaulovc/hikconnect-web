@@ -27,7 +27,7 @@ type: project
 
 11. **SRT ACK refinement** — Current 10ms ACK timer works for initial burst but flow may stall. The device's SRT implementation expects specific ACK format matching Hikvision's modified SRT. Consider using `@eyevinn/srt` native bindings for production reliability.
 
-12. **Video decryption for encrypted streams** — Sub-stream (streamType=1) appears unencrypted. Main stream (streamType=0) likely encrypted with AES-128-ECB(MD5(verificationCode)). Need to detect encryption from IMKH header and apply decryption per-slice.
+12. **Video decryption — BLOCKED on verification code** — Video slices are AES-128-ECB encrypted with `MD5(verificationCode)`. VPS/SPS/PPS are plaintext (FFmpeg detects 3840x2160 HEVC Main). Without correct code, decoded video is gray/corrupted. Code "ABCDEF" confirmed WRONG (produces random NAL types). Need the 6-char code from device sticker or Hik-Connect app → Device Settings → Verification Code.
 
 ### Remaining — ECDH for Relay/VTM
 

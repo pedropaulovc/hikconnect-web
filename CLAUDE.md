@@ -6,9 +6,14 @@ Web client for Hikvision NVRs/cameras that streams video via the Hik-Connect clo
 
 **Phase 1 (REST API client):** Complete. Login, devices, cameras, stream tickets, VTM info, relay config, recordings.
 
-**Phase 2 (protocol reverse engineering):** Bidirectional P2P communication achieved. P2P_SETUP works, device responds with PREVIEW_RSP. Blocked on completing the PLAY_REQUEST → data session → video data pipeline.
+**Phase 2 (protocol reverse engineering):** Complete. Full P2P streaming pipeline reverse-engineered from iVMS-4200 (Ghidra) and verified on VPS. P2P_SETUP → hole-punch → SRT → H.265 video data flowing.
 
-**Phase 3 (streaming + UI):** Skeleton built. LiveStream pipeline, FFmpeg HLS, web player all wired up. Needs the P2P data session to deliver actual video.
+**Phase 3 (streaming + UI):** Pipeline functional. 343 H.265 frames decoded (4K), 9 HLS segments generated. Blocked on device verification code for AES decryption of video slices.
+
+**Next steps:**
+1. Get the NVR verification code (6-char code from device sticker or Hik-Connect app → Device Settings)
+2. Update `HikRtpExtractor` with correct AES-128-ECB decryption using `MD5(verificationCode)`
+3. Run `./scripts/test-full-pipeline.sh` on VPS for end-to-end browser playback
 
 ## Architecture
 
@@ -44,7 +49,8 @@ Client                    P2P Server (52.x:6000)      Device (NVR)
 |--------|------|---------|
 | HikConnect API client | `src/lib/hikconnect/client.ts` | REST API: login, devices, tickets, P2P config |
 | V3 protocol codec | `src/lib/p2p/v3-protocol.ts` | Hikvision binary protocol: encode/decode, TLV, CRC-8 |
-| P2P session | `src/lib/p2p/p2p-session.ts` | UDP P2P: P2P_SETUP, hole punch (0xC00/0xC01), PLAY_REQUEST, data |
+| P2P session | `src/lib/p2p/p2p-session.ts` | UDP P2P: P2P_SETUP, hole punch, SRT handshake, PLAY_REQUEST |
+| Hik-RTP extractor | `src/lib/p2p/hik-rtp.ts` | Strip Hik-RTP/sub-headers, extract H.265 NALs, AES decrypt |
 | Relay client | `src/lib/p2p/relay-client.ts` | TCP relay: ECDH handshake, TLV framing (blocked on KDF) |
 | VTM client | `src/lib/p2p/vtm-client.ts` | TCP VTM relay: protobuf framing, ECDH (incomplete) |
 | Device P2P framing | `src/lib/p2p/device-p2p.ts` | Device-side packet types: 7534/80xx/41ab |
