@@ -108,6 +108,15 @@ export function deriveSharedSecret(privateKey: Buffer, peerPublicKey: Buffer): B
  * - Output: `length` bytes of session key
  */
 export function ecdhDeriveSessionKey(masterKey: Buffer, length: number): Buffer {
+  // Try multiple KDF approaches — the correct one depends on the exact
+  // Hikvision SHA-256 DRBG implementation in ecdhCryption.dll.
+  // The DRBG is seeded with "ezviz-ecdh" during InitLib.
+  //
+  // Current approach: HKDF-SHA256 with salt="ezviz-ecdh"
+  // Alternative approaches to try if this fails:
+  // 1. Raw master key (no KDF)
+  // 2. SHA-256(master_key)
+  // 3. HMAC-SHA256(key="ezviz-ecdh", data=master_key)
   const salt = Buffer.from('ezviz-ecdh', 'ascii')
   const info = Buffer.alloc(0)
   const derived = hkdfSync('sha256', masterKey, salt, info, length)
