@@ -660,8 +660,14 @@ export class P2PSession extends EventEmitter {
     const type = buf.readUInt16BE(0)
 
     // Known control types
-    if (type === PktType.KEEPALIVE) {
+    if (type === PktType.KEEPALIVE || type === 0x8001) {
+      // SRT keepalive or custom keepalive
       this.sendKeepalive()
+      return
+    }
+
+    // SRT ACK (0x8002) or SRT light ACK (0x8005/0x8006) — just log
+    if (type === 0x8002 || type === 0x8005 || type === 0x8006) {
       return
     }
 
@@ -688,18 +694,16 @@ export class P2PSession extends EventEmitter {
       return
     }
 
-    // Check if this is a data packet (session ID matches)
-    if (this.dataSessionId !== 0) {
-      const possibleSessionId = buf.readUInt32BE(0)
-      if (possibleSessionId === this.dataSessionId) {
-        this.handleDataPacket(buf)
-        return
-      }
+    // SRT data packet: first bit = 0 (not control), 16+ bytes, from device
+    // SRT data header: seqNum(4B) + msgNo(4B) + timestamp(4B) + destSocketId(4B)
+    if (buf.length >= 16 && (buf[0] & 0x80) === 0 && this.dataSessionId !== 0) {
+      this.handleSrtDataPacket(buf)
+      return
     }
 
-    // Unknown packet with known data session prefix — try as data
-    if (buf.length > 16 && (type & 0xff00) !== 0x8000 && type !== PktType.SESSION_SETUP) {
-      this.handlePossibleDataPacket(buf)
+    // Unknown packet — log for debugging
+    if (buf.length > 4) {
+      console.log(`[P2P] Unhandled packet ${buf.length}B type=0x${type.toString(16)} first16=${buf.subarray(0, Math.min(16, buf.length)).toString('hex')}`)
     }
   }
 
@@ -920,30 +924,51 @@ export class P2PSession extends EventEmitter {
     console.log(`[SRT] Sent conclusion response with extensions`)
   }
 
-  private handleDataPacket(buf: Buffer): void {
-    if (buf.length < 16) return
+  private srtDataCount = 0
+  private srtTotalBytes = 0
 
-    const seq = buf.readUInt16BE(6)
+  private handleSrtDataPacket(buf: Buffer): void {
+    // SRT data packet format (16-byte header + payload):
+    // Bytes 0-3:  F(1) + seqNum(31)  — F=0 for data
+    // Bytes 4-7:  PP(2) + O(1) + KK(2) + R(1) + msgNum(26)
+    // Bytes 8-11: Timestamp (microseconds)
+    // Bytes 12-15: Destination Socket ID
+    // Bytes 16+: Payload
+    const seqNum = buf.readUInt32BE(0) & 0x7fffffff
     const payload = buf.subarray(16)
 
-    // Send ACK
-    this.sendShortAck(seq)
+    this.srtDataCount++
+    this.srtTotalBytes += payload.length
 
-    // Emit the data payload
+    if (this.srtDataCount <= 5 || this.srtDataCount % 100 === 0) {
+      console.log(`[SRT-DATA] #${this.srtDataCount} seq=${seqNum} payload=${payload.length}B total=${this.srtTotalBytes}B first16=${payload.subarray(0, Math.min(16, payload.length)).toString('hex')}`)
+    }
+
+    // Emit the payload for IMKH parsing
     this.emit('data', payload)
+
+    // Send SRT ACK for the received data
+    this.sendSrtAck(seqNum)
   }
 
-  private handlePossibleDataPacket(buf: Buffer): void {
-    // If we haven't established a data session yet, try to detect one
-    if (this.dataSessionId === 0 && buf.length > 16) {
-      const possibleId = buf.readUInt32BE(0)
-      // Data session IDs don't start with 0x80 or 0x75
-      if ((possibleId & 0xff000000) !== 0x80000000 && (possibleId & 0xffff0000) !== 0x75340000) {
-        this.dataSessionId = possibleId
-        this.emit('dataSessionEstablished', possibleId)
-        this.handleDataPacket(buf)
-      }
-    }
+  private sendSrtAck(ackSeqNum: number): void {
+    // SRT ACK control packet (type=2)
+    const pkt = Buffer.alloc(40)
+    pkt.writeUInt16BE(0x8002, 0) // F=1, control type=2 (ACK)
+    pkt.writeUInt16BE(0, 2)      // subtype
+    pkt.writeUInt32BE(ackSeqNum, 4) // ACK sequence number
+    pkt.writeUInt32BE(timestamp32(), 8) // timestamp
+    pkt.writeUInt32BE(this.srtPeerSocketId ?? 0, 12) // dest socket ID
+
+    // ACK data: last ACK'd sequence
+    pkt.writeUInt32BE(ackSeqNum + 1, 16) // Last ACK'd Packet Sequence Number + 1
+    pkt.writeUInt32BE(100, 20)   // RTT (microseconds, estimate)
+    pkt.writeUInt32BE(10, 24)    // RTT variance
+    pkt.writeUInt32BE(1000, 28)  // Available buffer size
+    pkt.writeUInt32BE(0, 32)     // Packets receiving rate
+    pkt.writeUInt32BE(0, 36)     // Estimated link capacity
+
+    this.sendToDevice(pkt)
   }
 
   // -- Helpers --
