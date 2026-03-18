@@ -175,13 +175,27 @@ export function buildEcdhReqPacket(opts: {
   // Fixed-size client info (32B encrypted master + 91B pubkey)
   const clientInfo = Buffer.concat([encryptedMaster, pubKey])
 
-  // Copy body (self public key material, 91 bytes)
-  const preHmac = body
-    ? Buffer.concat([header, clientInfo, body])
+  // Encrypt body with ChaCha20 if present
+  // From Ghidra: FUN_180012b50 sets up ChaCha20 with session key
+  // FUN_180012c90 sets nonce = [counter=0, nonce_word1=1, 0, 0] (12 bytes)
+  // FUN_180012d40 XORs body with keystream
+  let encryptedBody: Buffer | undefined
+  if (body && body.length > 0) {
+    // ChaCha20 IV: 4-byte LE counter (0) + 12-byte nonce (1 as LE uint32 + 8 zeros)
+    const chachaIv = Buffer.alloc(16)
+    chachaIv.writeUInt32LE(0, 0) // counter = 0
+    chachaIv.writeUInt32LE(1, 4) // nonce word 1 = 1
+    // nonce words 2,3 = 0 (already zero)
+
+    const cipher = createCipheriv('chacha20', sessionKey, chachaIv)
+    encryptedBody = cipher.update(body)
+  }
+
+  const preHmac = encryptedBody
+    ? Buffer.concat([header, clientInfo, encryptedBody])
     : Buffer.concat([header, clientInfo])
 
-  // Compute CRC32 of header and body, format as string, then HMAC-SHA256
-  // Simplified: HMAC-SHA256 over the full packet content
+  // HMAC-SHA256 over the full packet content
   const hmac = createHmac('sha256', sessionKey)
   hmac.update(preHmac)
   const mac = hmac.digest()
