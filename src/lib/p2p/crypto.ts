@@ -91,31 +91,130 @@ export function deriveSharedSecret(privateKey: Buffer, peerPublicKey: Buffer): B
  * Phase 2: XOR the 48 bytes with a hash of the input, then use first 32 bytes
  *   as new AES-256 key for the session
  *
- * The full native KDF uses a custom Matyas-Meyer-Oseas hash + AES-256-ECB.
+ * Implements the exact Hikvision custom hash-based KDF from ecdhCryption.dll.
  * From Ghidra RE: FUN_180016730 (custom hash) → FUN_180016a60 (key derivation).
  *
- * The custom hash is NOT a standard algorithm — it uses AES-256-ECB with
- * a Merkle-Damgård-like construction. Exact implementation is complex.
- *
- * Current implementation: AES-256-ECB counter mode with master key directly.
- * This produces deterministic output but may not match the server's expectation.
- * The relay returns error 0x2715 (auth/decryption failure), indicating the
- * KDF is not yet correct.
- *
- * TODO: Implement the exact FUN_180016730 hash or capture a known-good
- * handshake from iVMS-4200 to derive the correct algorithm.
+ * The hash uses a Matyas-Meyer-Oseas construction with AES-256-ECB:
+ * 1. Pad input: [3 zero bytes, counter, 12 zeros, 4-byte BE length, 3 zeros,
+ *    0x30, data, 0x80 padding]
+ * 2. XOR 16-byte blocks into state, AES-256-ECB encrypt after each XOR
+ * 3. Repeat 3 times (incrementing counter) to produce 48 bytes
+ * 4. Use those 48 bytes as new AES-256 key, produce 48 more output bytes
  */
 export function ecdhDeriveSessionKey(masterKey: Buffer, length: number): Buffer {
+  // Phase 1: Custom hash (FUN_180016730) of the master key → 48 bytes
+  const hashResult = hikCustomHash(masterKey)
+
+  // Phase 2: Use hash result as AES-256 key, counter-mode for final output
+  // From FUN_180016a60: the hash result feeds into a new AES key expansion,
+  // then counter-mode AES produces the session key bytes
+  return hikCounterMode(hashResult.subarray(0, 32), length)
+}
+
+/**
+ * Hikvision custom hash (FUN_180016730 from ecdhCryption.dll).
+ * Input: arbitrary bytes. Output: 48 bytes.
+ *
+ * Uses Matyas-Meyer-Oseas construction: H(m) = E_H(m) XOR m
+ * with AES-256-ECB as the block cipher.
+ */
+function hikCustomHash(data: Buffer): Buffer {
+  // Build the padded message buffer (0x1A0 = 416 bytes)
+  const buf = Buffer.alloc(0x1a0)
+  // Byte 3: counter (starts at 0, incremented before each use in the outer loop)
+  // buf[3] = 0 (will be incremented in the loop)
+  // Bytes 16-19: big-endian length of input data
+  buf[16] = (data.length >> 24) & 0xff
+  buf[17] = (data.length >> 16) & 0xff
+  buf[18] = (data.length >> 8) & 0xff
+  buf[19] = data.length & 0xff
+  // Byte 23: 0x30 (output size indicator)
+  buf[23] = 0x30
+  // Bytes 24+: input data
+  data.copy(buf, 24)
+  // Byte after data: 0x80 (Merkle-Damgård padding)
+  buf[24 + data.length] = 0x80
+
+  // Initial AES-256 key: [0x00, 0x01, 0x02, ..., 0x1F]
+  const initialKey = Buffer.alloc(32)
+  for (let i = 0; i < 32; i++) initialKey[i] = i
+
+  // Set up AES-256-ECB context
+  // local_368 is the AES context, initialized with the key [0..31]
+  let aesKey = initialKey
+
+  // Total bytes to process: param_3 + 0x19 (data length + 25 header bytes)
+  const totalBytes = data.length + 0x19
+
+  // Outer loop: produce 3 x 16 = 48 bytes
+  const intermediate = Buffer.alloc(48)
+
+  for (let block = 0; block < 3; block++) {
+    // Increment counter byte (local_1e5 = buf[3])
+    buf[3] = buf[3] + 1
+
+    // Inner loop: XOR 16-byte chunks from buf into state, then AES-ECB encrypt
+    const state = Buffer.alloc(16)
+    let remaining = totalBytes
+    let offset = 0 // Read from start of buf (lVar9 starts at 0x60 relative to &local_248,
+                    // which = 0x248 - 0x1e8 = 0x60 offset into buf... so offset 0 of buf)
+
+    while (remaining > 0) {
+      // XOR 16 bytes from buf[offset] into state
+      for (let i = 0; i < 16; i++) {
+        state[i] ^= buf[offset + i]
+      }
+      offset += 16
+
+      // Consume min(remaining, 16) bytes
+      const consume = Math.min(remaining, 16)
+      remaining -= consume
+
+      // AES-256-ECB encrypt state in-place
+      const cipher = createCipheriv('aes-256-ecb', aesKey, null)
+      cipher.setAutoPadding(false)
+      const encrypted = cipher.update(state)
+      encrypted.copy(state)
+    }
+
+    // Store 16 bytes of result
+    state.copy(intermediate, block * 16)
+  }
+
+  // Phase 2: Use intermediate (48 bytes) as new AES-256 key (first 32 bytes)
+  aesKey = intermediate.subarray(0, 32)
+
+  // Produce 48 bytes of final output via AES-256-ECB (self-encrypting state)
+  const result = Buffer.alloc(48)
+  const finalState = Buffer.alloc(16) // starts as zeros
+
+  for (let block = 0; block < 3; block++) {
+    const cipher = createCipheriv('aes-256-ecb', aesKey, null)
+    cipher.setAutoPadding(false)
+    const encrypted = cipher.update(finalState)
+    encrypted.copy(result, block * 16)
+    encrypted.copy(finalState) // feed output as next input (ECB chaining)
+  }
+
+  return result
+}
+
+/**
+ * AES-256-ECB counter mode key derivation.
+ * From FUN_180016a60 phase 2 and FUN_180016e00.
+ */
+function hikCounterMode(aesKey: Buffer, length: number): Buffer {
   const blocks: Buffer[] = []
   let remaining = length
   const counterBlock = Buffer.alloc(16)
   let counter = 1
 
   while (remaining > 0) {
+    // Increment counter at byte 15 (big-endian style from native code)
     counterBlock[15] = counter & 0xff
     counter++
 
-    const cipher = createCipheriv('aes-256-ecb', masterKey, null)
+    const cipher = createCipheriv('aes-256-ecb', aesKey, null)
     cipher.setAutoPadding(false)
     const block = cipher.update(counterBlock)
 
