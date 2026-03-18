@@ -877,7 +877,7 @@ export class P2PSession extends EventEmitter {
   }
 
   private handleSrtConclusion(buf: Buffer, peerSocketId: number): void {
-    console.log(`[SRT] CONCLUSION received — SRT connection established!`)
+    console.log(`[SRT] CONCLUSION received (${buf.length}B) — raw: ${buf.toString('hex')}`)
 
     // The SRT connection is now established
     // Set data session from the initial sequence number
@@ -887,8 +887,10 @@ export class P2PSession extends EventEmitter {
       this.emit('dataSessionEstablished', initSeq)
     }
 
-    // Send our conclusion response
-    const pkt = Buffer.alloc(64)
+    // Send our conclusion response with SRT extension
+    // The device's CONCLUSION includes ext type=1 (SRT_CMD_HSREQ) with SRT version
+    // We need to include ext type=2 (SRT_CMD_HSRSP) in our response
+    const pkt = Buffer.alloc(80) // 16 header + 48 body + 16 extension
     pkt.writeUInt16BE(0x8000, 0)
     pkt.writeUInt16BE(0, 2)
     pkt.writeUInt32BE(0, 4)
@@ -897,16 +899,25 @@ export class P2PSession extends EventEmitter {
 
     pkt.writeUInt32BE(5, 16)         // Version: 5 (SRT)
     pkt.writeUInt16BE(0, 20)         // Encryption: none
-    pkt.writeUInt16BE(0x4a17, 22)    // Extension: SRT magic
+    pkt.writeUInt16BE(1, 22)         // Extension: 1 (extensions present)
     pkt.writeUInt32BE(initSeq, 24)   // Initial sequence number
     pkt.writeUInt32BE(1500, 28)      // MTU
     pkt.writeUInt32BE(32, 32)        // Window
     pkt.writeUInt32BE(0xFFFFFFFF, 36) // Handshake type: CONCLUSION
     pkt.writeUInt32BE(this.sourceId, 40) // Our socket ID
     pkt.writeUInt32BE(this.srtSynCookie ?? 0, 44) // SYN cookie
+    // Peer IP: zeros (or our IP)
+    // bytes 48-63: peer IP (zeros)
+
+    // SRT extension: SRT_CMD_HSRSP (type=2)
+    pkt.writeUInt16BE(2, 64)         // Extension type: SRT_CMD_HSRSP
+    pkt.writeUInt16BE(3, 66)         // Extension length: 3 (32-bit words)
+    pkt.writeUInt32BE(0x00010401, 68) // SRT version 1.4.1 (matching device)
+    pkt.writeUInt32BE(0x000000b4, 72) // Flags (matching device)
+    pkt.writeUInt32BE(0, 76)         // Reserved
 
     this.sendToDevice(pkt)
-    console.log(`[SRT] Sent conclusion response`)
+    console.log(`[SRT] Sent conclusion response with extensions`)
   }
 
   private handleDataPacket(buf: Buffer): void {
