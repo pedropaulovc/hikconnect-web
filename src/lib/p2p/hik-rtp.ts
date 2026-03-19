@@ -36,26 +36,28 @@ function deriveAesKey(verificationCode: string): Buffer {
  * The decrypted bytes contain the original NAL header + initial payload.
  */
 function decryptNal(data: Buffer, aesKey: Buffer): Buffer {
-  // Encrypted NAL structure (from libPlayCtrl.so IDMXAESDecryptFrame + VPS testing):
-  //   [16B AES-ECB encrypted] [plaintext rest...]
-  // The first 16 bytes include the type-49 header bytes. After decryption,
-  // bytes 0-1 become the original NAL header, bytes 2-15 are initial payload.
+  // Encrypted NAL structure (confirmed by VPS brute-force: MD5 key @offset 2 → IDR type 19):
+  //   [2B type-49 NAL header (0x62 0x01)] [16B AES-ECB encrypted] [plaintext rest...]
+  // The encrypted block contains [2B original NAL header] [14B initial payload].
+  // Drop the type-49 wrapper and return from byte 2 onward.
+  const WRAPPER_LEN = 2
   const AES_BLOCK_SIZE = 16
 
-  if (data.length < AES_BLOCK_SIZE) {
+  if (data.length < WRAPPER_LEN + AES_BLOCK_SIZE) {
     return data // too short to decrypt
   }
 
   const result = Buffer.from(data)
 
-  // Decrypt first 16 bytes in-place (includes type-49 header → original NAL header)
-  const encryptedBlock = result.subarray(0, AES_BLOCK_SIZE)
+  // Decrypt 16 bytes starting after the 2-byte type-49 wrapper
+  const encryptedBlock = result.subarray(WRAPPER_LEN, WRAPPER_LEN + AES_BLOCK_SIZE)
   const decipher = createDecipheriv('aes-128-ecb', aesKey, null)
   decipher.setAutoPadding(false)
   const decrypted = decipher.update(encryptedBlock)
-  decrypted.copy(result, 0)
+  decrypted.copy(result, WRAPPER_LEN)
 
-  return result
+  // Return from byte 2: [original_hdr(2)] [decrypted_data(14)] [plaintext_rest...]
+  return result.subarray(WRAPPER_LEN)
 }
 
 export class HikRtpExtractor extends EventEmitter {
