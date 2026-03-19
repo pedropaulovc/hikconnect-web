@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { LiveStream } from '@/lib/p2p/live-stream'
+import { P2P_SERVER_KEY } from '@/lib/p2p/p2p-session'
 import { getAuthenticatedClient } from '@/lib/hikconnect/getClient'
 import { extractUserId } from '@/lib/hikconnect/client'
 import { getPublicIp } from '@/lib/utils/public-ip'
@@ -34,17 +35,13 @@ export async function POST(req: Request) {
   try {
     const client = getAuthenticatedClient()
     const p2pConfig = await client.getP2PConfig(deviceSerial)
-    const p2pKey = Buffer.from(p2pConfig.secretKey, 'hex')
-
-    // For playback, we use streamType=0 (main stream) and busType would be 2
-    // The P2P session needs to send a playback request instead of preview
     const p2pLinkKey = Buffer.from(p2pConfig.secretKey.substring(0, 32), 'ascii')
     const stream = new LiveStream({
       deviceSerial,
       deviceIp: p2pConfig.connection.netIp || p2pConfig.connection.wanIp,
       devicePort: p2pConfig.connection.netStreamPort || 9020,
       p2pServers: p2pConfig.servers.map(s => ({ host: s.ip, port: s.port })),
-      p2pKey,
+      p2pKey: P2P_SERVER_KEY,
       p2pLinkKey,
       p2pKeyVersion: p2pConfig.keyVersion || 101,
       p2pKeySaltIndex: 3,
