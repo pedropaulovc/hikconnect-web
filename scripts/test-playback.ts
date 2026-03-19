@@ -2,13 +2,14 @@
  * End-to-end playback test: fetch recordings → P2P connect → stream 1 min → save MP4
  *
  * Usage:
- *   PUBLIC_IP=x.x.x.x npx tsx scripts/test-playback.ts [startTime]
+ *   npx tsx scripts/test-playback.ts [startTime]
  *
  * Examples:
- *   PUBLIC_IP=1.2.3.4 npx tsx scripts/test-playback.ts 2026-03-19T09:00:00
- *   PUBLIC_IP=1.2.3.4 npx tsx scripts/test-playback.ts   # auto-picks recent recording
+ *   npx tsx scripts/test-playback.ts 2026-03-19T09:00:00
+ *   npx tsx scripts/test-playback.ts   # auto-picks recent recording
  *
- * Requires VPS with public IP (device needs UDP hole-punch to us).
+ * Works behind NAT — no public IP or VPS required.
+ * P2P server derives our NAT-mapped address from UDP packet source.
  */
 import { readFileSync, mkdirSync, writeFileSync } from 'fs'
 
@@ -27,11 +28,9 @@ const DEVICE_SERIAL = 'L38239367'
 const CHANNEL = 1
 const CAPTURE_DURATION_MS = 65_000 // 65s to ensure 60s+ of video
 
-async function getPublicIp(): Promise<string> {
-  if (process.env.PUBLIC_IP) return process.env.PUBLIC_IP
-  const resp = await fetch('https://api.ipify.org?format=json')
-  const data = await resp.json() as { ip: string }
-  return data.ip
+/** Optional public IP hint — P2P server derives NAT address from UDP source regardless. */
+function getPublicIpHint(): string | undefined {
+  return process.env.PUBLIC_IP
 }
 
 async function main() {
@@ -50,12 +49,14 @@ async function main() {
   let stopTime: string
 
   if (startTime) {
-    // User-provided start time — add 1 minute for stop
-    const start = new Date(startTime)
-    const stop = new Date(start.getTime() + 60_000)
-    stopTime = stop.toISOString().replace(/\.\d+Z$/, '').replace('Z', '')
-    // Normalize startTime format (strip any trailing Z or ms)
-    startTime = start.toISOString().replace(/\.\d+Z$/, '').replace('Z', '')
+    // Pass literal time string — NVR expects device-local time, NOT UTC
+    const [datePart, timePart] = startTime.split('T')
+    const [hh, mm, ss] = timePart.split(':').map(Number)
+    const totalSec = hh * 3600 + (mm + 1) * 60 + ss
+    const stopH = String(Math.floor(totalSec / 3600)).padStart(2, '0')
+    const stopM = String(Math.floor((totalSec % 3600) / 60)).padStart(2, '0')
+    const stopS = String(totalSec % 60).padStart(2, '0')
+    stopTime = `${datePart}T${stopH}:${stopM}:${stopS}`
   } else {
     // Auto-pick: query recordings from last 2 hours
     console.log('No startTime provided, querying recent recordings...')
@@ -84,8 +85,8 @@ async function main() {
   // --- P2P config ---
   const p2p = await client.getP2PConfig(DEVICE_SERIAL)
   const p2pLinkKey = Buffer.from(p2p.secretKey.substring(0, 32), 'ascii')
-  const publicIp = await getPublicIp()
-  console.log(`Public IP: ${publicIp}`)
+  const publicIpHint = getPublicIpHint()
+  console.log(`Public IP hint: ${publicIpHint ?? '(auto — P2P server derives from UDP source)'}`)
   console.log(`Device IP: ${p2p.connection.netIp || p2p.connection.wanIp}:${p2p.connection.netStreamPort}`)
 
   // --- Stream tokens ---
@@ -113,7 +114,7 @@ async function main() {
     channelNo: CHANNEL,
     streamType: 0, // main stream for playback
     streamTokens: tokenData.tokenArray || [],
-    localPublicIp: publicIp,
+    localPublicIp: publicIpHint,
     busType: 2, // PLAYBACK
     startTime,
     stopTime: stopTime!,

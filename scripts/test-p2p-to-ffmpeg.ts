@@ -1,7 +1,8 @@
 /**
  * End-to-end test: P2P → Hik-RTP extract → FFmpeg → HLS files
  *
- * Usage: PUBLIC_IP=x.x.x.x npx tsx scripts/test-p2p-to-ffmpeg.ts
+ * Usage: npx tsx scripts/test-p2p-to-ffmpeg.ts
+ * Optional: PUBLIC_IP=x.x.x.x to provide a hint (not required — works behind NAT)
  */
 import { readFileSync, mkdirSync, existsSync, createWriteStream } from 'fs'
 const envFile = readFileSync('.env.local', 'utf-8')
@@ -17,14 +18,9 @@ import { spawn } from 'child_process'
 
 const P2P_SERVER_KEY = Buffer.from('e4465f2d011ebf9d85eb32d46e1549bdf64c171d616a132afaba4b4d348a39d5', 'hex')
 
-async function getPublicIp(): Promise<string> {
-  try {
-    const resp = await fetch('https://api.ipify.org?format=json')
-    const data = await resp.json() as { ip: string }
-    return data.ip
-  } catch {
-    return '0.0.0.0'
-  }
+/** Optional public IP hint — P2P server derives NAT address from UDP source regardless. */
+function getPublicIpHint(): string | undefined {
+  return process.env.PUBLIC_IP
 }
 
 async function main() {
@@ -60,7 +56,7 @@ async function main() {
     channelNo: 1,
     streamType: 1,
     streamTokens: tokenData.tokenArray || [],
-    localPublicIp: process.env.PUBLIC_IP || await getPublicIp(),
+    localPublicIp: getPublicIpHint(),
   })
 
   // Hik-RTP extractor: strips headers, emits H.265 NALs

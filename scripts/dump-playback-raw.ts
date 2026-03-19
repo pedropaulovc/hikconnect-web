@@ -2,7 +2,7 @@
  * Dump raw playback packets for protocol analysis.
  * Captures 10s of busType=2 data, prints first 10 packet headers.
  *
- * Usage: PUBLIC_IP=x.x.x.x npx tsx scripts/dump-playback-raw.ts
+ * Usage: npx tsx scripts/dump-playback-raw.ts
  */
 import { readFileSync, writeFileSync } from 'fs'
 
@@ -48,7 +48,7 @@ async function main() {
     channelNo: 1,
     streamType: 0,
     streamTokens: tokenData.tokenArray || [],
-    localPublicIp: process.env.PUBLIC_IP!,
+    localPublicIp: process.env.PUBLIC_IP,
     busType: 2,
     startTime: '2026-03-15T17:30:00',
     stopTime: '2026-03-15T17:31:00',

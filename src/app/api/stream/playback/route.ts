@@ -5,7 +5,6 @@ import { LiveStream } from '@/lib/p2p/live-stream'
 import { P2P_SERVER_KEY } from '@/lib/p2p/p2p-session'
 import { getAuthenticatedClient } from '@/lib/hikconnect/getClient'
 import { extractUserId } from '@/lib/hikconnect/client'
-import { getPublicIp } from '@/lib/utils/public-ip'
 import { sessions } from '../sessions'
 
 /**
@@ -51,7 +50,7 @@ export async function POST(req: Request) {
       clientId: 0x0aed13f5, // TODO: fetch from API
       channelNo: channel,
       streamType: 0, // main stream for playback
-      localPublicIp: await getPublicIp(),
+      // localPublicIp omitted — P2P server derives our NAT-mapped address from UDP source
       busType: 2, // playback mode
       startTime,
       stopTime,
