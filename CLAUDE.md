@@ -8,12 +8,16 @@ Web client for Hikvision NVRs/cameras that streams video via the Hik-Connect clo
 
 **Phase 2 (protocol reverse engineering):** Complete. Full P2P streaming pipeline reverse-engineered from iVMS-4200 (Ghidra) and verified on VPS. P2P_SETUP → hole-punch → SRT → H.265 video data flowing.
 
-**Phase 3 (streaming + UI):** Pipeline produces HLS segments from P2P video data. FFmpeg detects HEVC Main 3840x2160 from VPS/SPS/PPS. **Visual verification of actual video content still pending** — FFmpeg can produce .ts files from garbled data too.
+**Phase 3 (streaming + UI):** Complete. Live preview and playback both produce verified 4K video.
+- **Live preview** (busType=1): Hik-RTP framing → H.265 NAL extraction → FFmpeg HLS. Verified 87s footage from pcap.
+- **Playback** (busType=2): MPEG-PS container over Hik-RTP → FFmpeg demux. Verified 64s of recorded footage from 2026-03-15.
+
+**Key discovery:** Playback streams use MPEG Program Stream (PS) container, NOT raw H.265 NALs like live preview. The NVR stores recordings as PS files and streams them as-is. Strip 12-byte Hik-RTP headers from 0x8050 packets and pipe to FFmpeg as `-f mpeg`.
 
 **Next steps:**
-1. Deploy to VPS and visually verify .ts segment content (does it show a real camera image?)
-2. If corrupted: investigate whether video slices need decryption with a session-derived key (not verification code — iVMS/Android stream without it)
-3. If playable: end-to-end browser playback confirmed, move to production hardening
+1. Production hardening: session management, error recovery, multi-channel
+2. Browser playback UI: timeline scrubber, recording list, camera selector
+3. Playback HLS integration: pipe PS→FFmpeg→HLS for browser playback
 
 ## Architecture
 

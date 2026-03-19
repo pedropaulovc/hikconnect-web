@@ -13,6 +13,15 @@ import { EventEmitter } from 'node:events'
 import { createCipheriv, randomUUID } from 'node:crypto'
 import { encodeV3Message, decodeV3Message, defaultMask, Opcode, crc8, type V3Message } from './v3-protocol'
 
+/**
+ * P2P Server Key — outer encryption key for P2P server communication.
+ * Stable per account, captured via Frida hook on Android app.
+ * NOT the same as the API's KMS secretKey.
+ */
+export const P2P_SERVER_KEY = Buffer.from(
+  'e4465f2d011ebf9d85eb32d46e1549bdf64c171d616a132afaba4b4d348a39d5', 'hex'
+)
+
 // -- Config --
 
 export type P2PServer = {
