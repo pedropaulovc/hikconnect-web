@@ -1,0 +1,42 @@
+.container {
+  margin: 12px 0;
+}
+
+.bar {
+  position: relative;
+  height: 32px;
+  background: #1a1a1a;
+  border-radius: 4px;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.segment {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  background: #2563eb;
+  border-radius: 2px;
+}
+
+.marker {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  height: 100%;
+  background: #f87171;
+  transform: translateX(-1px);
+}
+
+.labels {
+  position: relative;
+  height: 20px;
+  margin-top: 4px;
+}
+
+.label {
+  position: absolute;
+  transform: translateX(-50%);
+  font-size: 10px;
+  color: #888;
+}

@@ -1,0 +1,56 @@
+.container {
+  padding: 20px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.card {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.name {
+  font-size: 16px;
+  margin-bottom: 4px;
+}
+
+.channel {
+  color: #888;
+  font-size: 12px;
+  margin-bottom: 12px;
+}
+
+.links {
+  display: flex;
+  gap: 8px;
+}
+
+.liveLink {
+  padding: 6px 16px;
+  border-radius: 4px;
+  background: #2563eb;
+  color: #fff;
+  text-decoration: none;
+  font-size: 13px;
+}
+
+.playbackLink {
+  padding: 6px 16px;
+  border-radius: 4px;
+  background: #333;
+  color: #e0e0e0;
+  text-decoration: none;
+  font-size: 13px;
+}
+
+.error {
+  color: #f87171;
+  margin-top: 12px;
+}

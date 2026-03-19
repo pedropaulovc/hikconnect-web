@@ -1,0 +1,56 @@
+.container {
+  padding: 20px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.card {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 16px;
+  text-decoration: none;
+  color: #e0e0e0;
+  display: block;
+}
+
+.card:hover {
+  border-color: #555;
+}
+
+.cardHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.online {
+  background: #22c55e;
+}
+
+.offline {
+  background: #888;
+}
+
+.serial {
+  color: #888;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.error {
+  color: #f87171;
+  margin-top: 12px;
+}
