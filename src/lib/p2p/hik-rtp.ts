@@ -152,9 +152,11 @@ export class HikRtpExtractor extends EventEmitter {
         this.inEncryptedNal = true
         this.type49Fragments = [unwrapType49Nal(data)]
       } else {
-        // Continuation fragment: strip type-49 wrapper + extension (NO flag byte)
-        // Only the first fragment has the flag byte; continuations are just wrapper+ext+data
-        const contHdrLen = 2 + 1 + ((data[2] >> 6) & 3) // 2B hdr + ext bytes
+        // Continuation fragment: strip type-49 wrapper + variable-length extension
+        // Extension at byte 2: top 2 bits = extra byte count (0-3)
+        // Total strip: 2 (wrapper) + 1 (ext base) + extra bytes
+        const extraBytes = (data[2] >> 6) & 3
+        const contHdrLen = 2 + 1 + extraBytes
         this.type49Fragments.push(data.subarray(contHdrLen))
       }
       return
