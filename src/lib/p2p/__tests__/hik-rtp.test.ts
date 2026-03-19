@@ -1,5 +1,4 @@
 import { describe, it, expect, vi } from 'vitest'
-import { createHash, createCipheriv, createDecipheriv } from 'node:crypto'
 import { HikRtpExtractor } from '../hik-rtp'
 
 describe('HikRtpExtractor', () => {
@@ -87,89 +86,108 @@ describe('HikRtpExtractor', () => {
     expect((nals[0][4] >> 1) & 0x3f).toBe(32) // VPS
   })
 
-  describe('NAL type 49 decryption', () => {
-    const VERIFICATION_CODE = 'ABCDEF'
-    const aesKey = createHash('md5').update(VERIFICATION_CODE).digest()
-
-    function encryptBlock(plaintext: Buffer): Buffer {
-      const cipher = createCipheriv('aes-128-ecb', aesKey, null)
-      cipher.setAutoPadding(false)
-      return Buffer.concat([cipher.update(plaintext), cipher.final()])
-    }
-
-    /** Build a Hik-RTP packet containing an encrypted NAL (type 49).
-     *  Encrypts first 16 bytes of originalNal. The encrypted result's first byte
-     *  must parse as NAL type 49 for our extractor to recognize it — we find such
-     *  a plaintext by constructing one whose AES-ECB ciphertext starts with 0x62. */
-    function buildType49Packet(encryptedNalData: Buffer): Buffer {
-      const packet = Buffer.alloc(12 + encryptedNalData.length)
+  describe('NAL type 49 FU reassembly (RFC 7798)', () => {
+    /** Build a Hik-RTP packet with raw NAL data (no sub-header). */
+    function buildPacket(nalData: Buffer): Buffer {
+      const packet = Buffer.alloc(12 + nalData.length)
       packet.writeUInt16BE(0x8060, 0)
-      encryptedNalData.copy(packet, 12)
+      nalData.copy(packet, 12)
       return packet
     }
 
-    it('unwraps type-49 NAL to restore original NAL type from extension', () => {
+    it('reassembles FU start+end into a complete NAL', () => {
       const extractor = new HikRtpExtractor()
       const nals: Buffer[] = []
       extractor.on('nalUnit', (nal: Buffer) => nals.push(nal))
 
-      // Build a type-49 NAL with extension encoding original type 19 (IDR_W_RADL)
-      // Extension byte: top 2 bits = 0 (no extra bytes), bottom 6 bits = 19
-      const type49Nal = Buffer.alloc(32)
-      type49Nal[0] = 0x62  // NAL type 49
-      type49Nal[1] = 0x01
-      type49Nal[2] = 0x13  // extension: type 19, 0 extra bytes
-      type49Nal[3] = 0x00  // flag byte
-      type49Nal.fill(0xaa, 4) // slice data
+      // FU start: PayloadHdr(type=49) + FU header(S=1, E=0, fuType=19=IDR)
+      const start = Buffer.alloc(20)
+      start[0] = 0x62  // type 49 PayloadHdr byte 1
+      start[1] = 0x01  // PayloadHdr byte 2
+      start[2] = 0x93  // FU: S=1(0x80), E=0, fuType=19(0x13) → 0x93
+      start.fill(0xaa, 3) // FU payload (slice data)
+      extractor.processPacket(buildPacket(start))
+      expect(nals.length).toBe(0) // not emitted yet
 
-      const packet = Buffer.alloc(12 + type49Nal.length)
-      packet.writeUInt16BE(0x8060, 0)
-      type49Nal.copy(packet, 12)
-      extractor.processPacket(packet)
-      extractor.flush() // flush accumulated fragments
+      // FU end: PayloadHdr(type=49) + FU header(S=0, E=1, fuType=19)
+      const end = Buffer.alloc(12)
+      end[0] = 0x62; end[1] = 0x01
+      end[2] = 0x53  // FU: S=0, E=1(0x40), fuType=19(0x13) → 0x53
+      end.fill(0xbb, 3)
+      extractor.processPacket(buildPacket(end))
+
+      expect(nals.length).toBe(1)
+      // Reconstructed NAL type should be 19 (IDR)
+      const nalType = (nals[0][4] >> 1) & 0x3f
+      expect(nalType).toBe(19)
+      // NAL data = reconstructed header(2B) + start payload(17B) + end payload(9B) = 28B
+      expect(nals[0].length).toBe(4 + 2 + 17 + 9) // start code + header + payloads
+    })
+
+    it('accumulates start + continuation + end fragments', () => {
+      const extractor = new HikRtpExtractor()
+      const nals: Buffer[] = []
+      extractor.on('nalUnit', (nal: Buffer) => nals.push(nal))
+
+      // Start (S=1, fuType=19)
+      const start = Buffer.from([0x62, 0x01, 0x93, 0x11, 0x22, 0x33])
+      extractor.processPacket(buildPacket(start))
+
+      // Continuation (S=0, E=0)
+      const cont = Buffer.from([0x62, 0x01, 0x13, 0x44, 0x55, 0x66])
+      extractor.processPacket(buildPacket(cont))
+      expect(nals.length).toBe(0) // still accumulating
+
+      // End (S=0, E=1)
+      const end = Buffer.from([0x62, 0x01, 0x53, 0x77, 0x88, 0x99])
+      extractor.processPacket(buildPacket(end))
 
       expect(nals.length).toBe(1)
       const nalType = (nals[0][4] >> 1) & 0x3f
-      expect(nalType).toBe(19) // IDR_W_RADL
+      expect(nalType).toBe(19)
+      // Payload: start(3B) + cont(3B) + end(3B) = 9B data + 2B header
+      expect(nals[0].subarray(4)).toEqual(Buffer.from([
+        0x26, 0x01,                   // reconstructed IDR header
+        0x11, 0x22, 0x33,             // start payload
+        0x44, 0x55, 0x66,             // cont payload (FU header stripped)
+        0x77, 0x88, 0x99,             // end payload (FU header stripped)
+      ]))
     })
 
-    it('accumulates type-49 fragments and emits on non-49 boundary', () => {
+    it('flushes incomplete FU when non-FU NAL arrives', () => {
       const extractor = new HikRtpExtractor()
       const nals: Buffer[] = []
       extractor.on('nalUnit', (nal: Buffer) => nals.push(nal))
 
-      // First type-49 fragment (with extension: type 19)
-      const frag1 = Buffer.alloc(20)
-      frag1[0] = 0x62; frag1[1] = 0x01
-      frag1[2] = 0x13 // type 19, 0 extra bytes
-      frag1[3] = 0x00 // flag
-      frag1.fill(0xbb, 4)
-      const pkt1 = Buffer.alloc(12 + 20); pkt1.writeUInt16BE(0x8060, 0); frag1.copy(pkt1, 12)
+      // Start fragment (no end)
+      const start = Buffer.from([0x62, 0x01, 0x93, 0xaa, 0xbb])
+      extractor.processPacket(buildPacket(start))
 
-      // Second type-49 fragment (continuation)
-      const frag2 = Buffer.alloc(16)
-      frag2[0] = 0x62; frag2[1] = 0x01
-      frag2.fill(0xcc, 2)
-      const pkt2 = Buffer.alloc(12 + 16); pkt2.writeUInt16BE(0x8060, 0); frag2.copy(pkt2, 12)
+      // PPS NAL triggers flush of incomplete FU
+      const pps = Buffer.from([0x44, 0x01, 0xe0, 0x76])
+      extractor.processPacket(buildPacket(pps))
 
-      // Non-type-49 packet (PPS) triggers flush
-      const pps = Buffer.alloc(12 + 4)
-      pps.writeUInt16BE(0x8060, 0)
-      pps[12] = 0x44; pps[13] = 0x01; pps[14] = 0xe0; pps[15] = 0x76 // PPS
+      expect(nals.length).toBe(2) // flushed FU + PPS
+      expect((nals[0][4] >> 1) & 0x3f).toBe(19) // IDR from FU
+      expect((nals[1][4] >> 1) & 0x3f).toBe(34) // PPS
+    })
 
-      extractor.processPacket(pkt1)
-      extractor.processPacket(pkt2)
-      expect(nals.length).toBe(0) // not flushed yet
+    it('handles consecutive FUs (multiple slice segments)', () => {
+      const extractor = new HikRtpExtractor()
+      const nals: Buffer[] = []
+      extractor.on('nalUnit', (nal: Buffer) => nals.push(nal))
 
-      extractor.processPacket(pps)
-      expect(nals.length).toBe(2) // flushed type-49 + PPS
+      // FU 1: IDR slice (fuType=19)
+      extractor.processPacket(buildPacket(Buffer.from([0x62, 0x01, 0x93, 0x11]))) // S=1
+      extractor.processPacket(buildPacket(Buffer.from([0x62, 0x01, 0x53, 0x22]))) // E=1
 
-      // First emitted NAL should be assembled type-49 with type 19
-      const assembledType = (nals[0][4] >> 1) & 0x3f
-      expect(assembledType).toBe(19)
-      // Second is PPS
-      const ppsType = (nals[1][4] >> 1) & 0x3f
-      expect(ppsType).toBe(34)
+      // FU 2: TRAIL_R slice (fuType=1)
+      extractor.processPacket(buildPacket(Buffer.from([0x62, 0x01, 0x81, 0x33]))) // S=1
+      extractor.processPacket(buildPacket(Buffer.from([0x62, 0x01, 0x41, 0x44]))) // E=1
+
+      expect(nals.length).toBe(2)
+      expect((nals[0][4] >> 1) & 0x3f).toBe(19) // IDR
+      expect((nals[1][4] >> 1) & 0x3f).toBe(1)  // TRAIL_R
     })
   })
 })

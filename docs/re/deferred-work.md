@@ -1,10 +1,10 @@
 ---
 name: deferred_p2p_work
-description: Remaining work for P2P/VTM streaming — video visual verification still pending
+description: Remaining work for P2P/VTM streaming — video verified, production hardening needed
 type: project
 ---
 
-## Streaming Work Status (2026-03-18)
+## Streaming Work Status (2026-03-19)
 
 ### Completed (VPS-tested)
 
@@ -19,24 +19,20 @@ type: project
 9. **~~Web pipeline~~** — LiveStream → HikRtpExtractor → FfmpegHlsPipe. ✓
 10. **~~Public IP~~** — Auto-detect via api.ipify.org with caching. ✓
 
-### NOT YET VERIFIED
+### VERIFIED — Video Output (2026-03-19)
 
-11. **Visual verification of video output** — FFmpeg produces .ts segments and reports frame counts, but nobody has actually opened a segment in a player to confirm it shows a real camera image. FFmpeg can "decode" encrypted/garbled slice data and still produce files — they'd just be gray/green/corrupted. **This is the #1 thing to verify next.**
+11. **~~Visual verification~~** — **CONFIRMED.** Extracted 391 NAL units from Android pcap capture (`scripts/frida/stream-capture.pcap`), decoded to 50 perfect 3840x2160 frames showing the Lobby camera. Frame matches reference screenshot. Zero FFmpeg errors.
 
-### Video Encryption — SOLVED (2026-03-18)
+### NAL Type 49 — SOLVED (2026-03-19)
 
-12. **Video decryption — IMPLEMENTED** — Reverse-engineered from `libPlayCtrl.so` (Ghidra analysis of `IDMXAESDecryptFrame`):
-    - **NAL type 49** = Hikvision encrypted NAL wrapper (HEVC unspec type)
-    - **Key** = `MD5(verification_code)` (e.g. MD5("ABCDEF")) → 16 bytes
-    - **Mode** = AES-128-ECB, custom Hikvision implementation (`IDMX_AES_decrypt_128`)
-    - **Scope** = **Per-NAL partial encryption** — only the first 16 bytes of each NAL body are encrypted (after the 2-byte HEVC NAL header). Rest is plaintext.
-    - **Structure**: `[2B type-49 header] [16B AES-ECB encrypted] [plaintext rest...]`
-    - Decrypted bytes contain the original NAL header + initial slice data
-    - For H.264 (codec < 3): full NAL body is encrypted (different from H.265)
-    - For H.265 (codec 3-6): only first 16 bytes (for performance — 4K frames are huge)
-    - **Encryption types**: type 1 = AES-128, type 2/0x12 = AES-128 (via IDMX_AES_set_decrypt_key), type 3/0x13 = AES-256
-    - ECDH path (udpEcdh=1) uses ChaCha20 + HMAC-SHA256 instead — not applicable for our device
-    - **Implementation**: `HikRtpExtractor` now accepts optional `verificationCode` constructor param. Set `VERIFICATION_CODE=ABCDEF` env var for test scripts.
+12. **NAL type 49 = HEVC Fragmentation Unit (FU) per RFC 7798** — NOT encryption/proprietary wrapper:
+    - **Structure**: `[2B PayloadHdr (type=49)] [1B FU header: S|E|FuType] [FU payload]`
+    - **S=1**: start of new FU — reconstruct NAL header from PayloadHdr + FuType
+    - **E=1**: end of FU — flush and emit reassembled NAL
+    - **S=0,E=0**: continuation — strip 3 bytes, append FU payload
+    - Large IDR frames split into ~230 FU fragments across MTU-sized packets
+    - Each IDR picture has 2+ FUs (multiple slice segments: IDR type-19 + TRAIL_R type-1)
+    - **AES encryption** only applies when "stream encryption" is enabled on NVR (not default)
 
 ### Remaining — Production Readiness
 
@@ -62,7 +58,7 @@ type: project
 
 ### Code Quality
 
-- 128 tests passing, 1 skipped (Vitest)
+- 132 tests passing, 1 skipped (Vitest)
 - Clean TypeScript build
 - Dead code removed from LiveStream and P2PSession
 - HikRtpExtractor unit tests added
