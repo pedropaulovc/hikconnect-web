@@ -1,81 +1,52 @@
 /**
- * Hik-RTP frame extractor — converts SRT data payloads into H.265 Annex B stream.
+ * Hik-RTP frame extractor — converts SRT/P2P data payloads into H.265 Annex B stream.
  *
- * Format (from VPS capture analysis):
- * - SRT data payload starts with 12-byte Hik-RTP header
- * - After header: 13-byte sub-frame header (0x0d + 4B + sync pattern a7 6d 4e 7e 55 66 77 88)
+ * Format (from pcap + VPS capture analysis):
+ * - Data payload starts with 12-byte Hik-RTP header (first 2 bytes = 0x8060/0x8050)
+ * - After header: 13-byte sub-frame header (0x0d + 4B + 8B sync pattern)
  * - After sub-header: NAL unit data
  *   - VPS/SPS/PPS (NAL types 32-34): parameter sets
  *   - Slice data (NAL types 0-21): video frames
- *   - Length-prefixed frames (0x00 0x01/0x02 + 2B length): SPS info
+ *   - Length-prefixed frames (0x00 NN 00 LL [data]): Hikvision metadata
  *
- * Hikvision type-49 NAL wrapper (from Ghidra RE of libPlayCtrl.so IDMXAESDEcrpytFrameCom):
- * - NAL type 49 = Hik proprietary wrapper around standard HEVC slices
- * - Structure: [2B type-49 hdr] [ext: original NAL type + length] [1B flag] [HEVC slice data]
- * - Extension byte 0: top 2 bits = extra byte count, bottom 6 bits = original NAL type
- * - Video data is plaintext (NOT AES-encrypted for this device with udpEcdh=0)
- * - AES decryption only applies when "stream encryption" is enabled on the NVR
+ * NAL type 49 = HEVC Fragmentation Unit (FU) per RFC 7798:
+ * - Structure: [2B PayloadHdr (type=49)] [1B FU header] [FU payload]
+ * - FU header: S(1) | E(1) | FuType(6)
+ *   - S=1: start of fragmented NAL, FuType = original NAL type
+ *   - E=1: end of fragmented NAL
+ *   - S=0,E=0: continuation fragment
+ * - NAL header reconstructed from PayloadHdr + FuType on start fragment
+ * - Each FU (S=1...E=1) produces one reassembled NAL unit
+ * - Large IDR frames split into multiple slice segments, each in its own FU
  */
 
 import { EventEmitter } from 'node:events'
 
 const HIK_RTP_HEADER_LEN = 12
-// SUB_HEADER_SYNC varies per session — not used for matching anymore
 const SUB_HEADER_LEN = 13 // 0x0d + 4 bytes + 8 bytes sync
 const ANNEX_B_START_CODE = Buffer.from([0x00, 0x00, 0x00, 0x01])
-const HIK_ENCRYPTED_NAL_TYPE = 49
-
-
-/**
- * Unwrap a Hikvision type-49 NAL unit.
- * Type-49 is a proprietary wrapper — NOT AES-encrypted (for default device config).
- * Structure: [2B type-49 hdr] [ext header] [1B flag] [HEVC slice data]
- * Extension byte 0: top 2 bits = extra byte count, bottom 6 bits = original NAL type
- * The original HEVC NAL header is reconstructed from the extension's NAL type field.
- */
-function unwrapType49Nal(data: Buffer): Buffer {
-  if (data.length < 4) return data
-
-  // Read extension at byte 2 (after 2-byte NAL header)
-  const extByte = data[2]
-  const extraBytes = (extByte >> 6) & 3  // top 2 bits: 0-3 extra bytes
-  const originalNalType = extByte & 0x3f // bottom 6 bits: original NAL type
-
-  // Total header: 2 (NAL hdr) + 1 + extraBytes (extension) + 1 (flag byte)
-  const headerLen = 2 + 1 + extraBytes + 1
-  if (data.length <= headerLen) return data
-
-  // Reconstruct original HEVC NAL header: type in bits 1-6 of first byte
-  const originalFirstByte = (originalNalType << 1) & 0x7e // forbidden_zero=0, nuh_layer_id_high=0
-  const originalSecondByte = 0x01 // nuh_temporal_id_plus1 = 1
-
-  // Build result: [original 2B NAL header] [slice data from after wrapper header]
-  const sliceData = data.subarray(headerLen)
-  const result = Buffer.alloc(2 + sliceData.length)
-  result[0] = originalFirstByte
-  result[1] = originalSecondByte
-  sliceData.copy(result, 2)
-
-  return result
-}
+const FU_NAL_TYPE = 49
 
 export class HikRtpExtractor extends EventEmitter {
   private nalCount = 0
-  private inEncryptedNal = false
-  private type49Fragments: Buffer[] = []
+  private fuFragments: Buffer[] = []
+  private fuNalHeader: Buffer | null = null
 
-  /** Flush any accumulated type-49 fragments as a complete NAL. */
+  /** Flush any accumulated FU fragments as a complete NAL. */
   flush(): void {
-    if (this.type49Fragments.length > 0) {
-      const assembled = Buffer.concat(this.type49Fragments)
-      this.type49Fragments = []
-      this.inEncryptedNal = false
+    if (this.fuFragments.length > 0 && this.fuNalHeader) {
+      const assembled = Buffer.concat([this.fuNalHeader, ...this.fuFragments])
+      this.fuFragments = []
+      this.fuNalHeader = null
       this.emitNal(assembled)
+      return
     }
+    this.fuFragments = []
+    this.fuNalHeader = null
   }
 
   /**
-   * Process a raw SRT data payload (the 'data' event from P2PSession).
+   * Process a raw data payload (the 'data' event from P2PSession).
    * Emits 'nalUnit' events with Annex B formatted H.265 data.
    */
   processPacket(payload: Buffer): void {
@@ -91,8 +62,6 @@ export class HikRtpExtractor extends EventEmitter {
     const rtpPayload = payload.subarray(HIK_RTP_HEADER_LEN)
 
     // Find and strip sub-header (0x0d + 4 variable bytes + 8-byte sync pattern = 13 bytes)
-    // Sub-header byte 1 high nibble = type (0x80/0x90/0xa0/0xd0)
-    // Sub-header bytes 2-3 = stream identifier (video vs audio)
     let dataStart = 0
     if (rtpPayload[0] === 0x0d && rtpPayload.length > SUB_HEADER_LEN) {
       const subHigh = rtpPayload[1] & 0xf0
@@ -115,13 +84,12 @@ export class HikRtpExtractor extends EventEmitter {
     const firstByte = data[0]
     const nalType = (firstByte >> 1) & 0x3f
 
-    // Flush accumulated type-49 fragments when ANY non-type-49 NAL arrives
-    if (nalType !== HIK_ENCRYPTED_NAL_TYPE && this.inEncryptedNal) {
+    // Flush accumulated FU fragments when ANY non-FU NAL arrives
+    if (nalType !== FU_NAL_TYPE && this.fuNalHeader) {
       this.flush()
     }
 
     // Length-prefixed format: 00 NN 00 LL [LL bytes of NAL data]
-    // Multiple length-prefixed NALs can be concatenated in one fragment
     if (firstByte === 0x00 && data.length > 4) {
       let offset = 0
       while (offset + 4 <= data.length) {
@@ -134,41 +102,45 @@ export class HikRtpExtractor extends EventEmitter {
       return
     }
 
-    // Valid H.265 NAL types: slices (0-21), VPS (32), SPS (33), PPS (34), SEI (35, 39-40)
-    // Types 22-31 and 36-38 are reserved/unused — skip to avoid passing audio as video
+    // Standard HEVC NAL types: slices (0-21), VPS (32), SPS (33), PPS (34), SEI (35, 39-40)
     if (nalType <= 21 || (nalType >= 32 && nalType <= 35) || nalType === 39 || nalType === 40) {
       this.emitNal(data)
       return
     }
 
-    // NAL type 49: Hikvision proprietary wrapper around HEVC slices.
-    // Large NALs are fragmented across SRT packets. Each fragment repeats the
-    // type-49 header (0x62 0x01). First fragment has extension with original NAL type.
-    // We accumulate ALL fragments and emit the complete reassembled NAL to avoid
-    // spurious start code splits within fragment data.
-    if (nalType === HIK_ENCRYPTED_NAL_TYPE) {
-      if (!this.inEncryptedNal) {
-        // First fragment: unwrap to get original NAL header + body
-        this.inEncryptedNal = true
-        this.type49Fragments = [unwrapType49Nal(data)]
+    // NAL type 49: HEVC Fragmentation Unit (FU) per RFC 7798.
+    // Structure: [2B PayloadHdr] [1B FU header: S|E|FuType] [FU payload]
+    // Each FU (S=1 start ... E=1 end) reassembles into one NAL unit.
+    if (nalType === FU_NAL_TYPE && data.length >= 3) {
+      const fuHeader = data[2]
+      const isStart = (fuHeader >> 7) & 1
+      const isEnd = (fuHeader >> 6) & 1
+      const fuType = fuHeader & 0x3f
+
+      if (isStart) {
+        // Start of new FU — flush any previous incomplete one
+        this.flush()
+        // Reconstruct original NAL header: preserve forbidden_zero_bit and nuh_layer_id
+        // from PayloadHdr, substitute NAL type from FU header
+        const origFirstByte = (data[0] & 0x81) | ((fuType << 1) & 0x7e)
+        this.fuNalHeader = Buffer.from([origFirstByte, data[1]])
+        this.fuFragments = [data.subarray(3)]
       } else {
-        // Continuation fragment: strip type-49 wrapper + variable-length extension
-        // Extension at byte 2: top 2 bits = extra byte count (0-3)
-        // Total strip: 2 (wrapper) + 1 (ext base) + extra bytes
-        const extraBytes = (data[2] >> 6) & 3
-        const contHdrLen = 2 + 1 + extraBytes
-        this.type49Fragments.push(data.subarray(contHdrLen))
+        // Continuation/end: strip 3 bytes (2B PayloadHdr + 1B FU header)
+        this.fuFragments.push(data.subarray(3))
+      }
+
+      if (isEnd) {
+        this.flush()
       }
       return
     }
 
-    // Hikvision custom NAL types (48-63 range): pass through
+    // Other NAL types in 48-63 range: pass through
     if (nalType >= 48) {
       this.emitNal(data)
       return
     }
-
-    // Unknown type — skip to avoid corrupting the stream
   }
 
   private emitNal(data: Buffer): void {
