@@ -4,13 +4,22 @@ import { useRef, useEffect } from 'react'
 import styles from './VideoPlayer.module.css'
 
 export function getHlsConfig(mode?: 'live' | 'playback') {
+  const base = {
+    enableWorker: true,
+    manifestLoadingRetryDelay: 2000,
+    manifestLoadingMaxRetry: 30,
+    levelLoadingRetryDelay: 2000,
+    levelLoadingMaxRetry: 30,
+    fragLoadingRetryDelay: 2000,
+    fragLoadingMaxRetry: 10,
+  }
   if (mode === 'playback') {
-    return { enableWorker: true }
+    return base
   }
   return {
+    ...base,
     liveSyncDurationCount: 3,
     liveMaxLatencyDurationCount: 6,
-    enableWorker: true,
   }
 }
 
