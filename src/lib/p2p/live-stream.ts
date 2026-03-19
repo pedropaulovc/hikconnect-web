@@ -112,7 +112,7 @@ export class LiveStream extends EventEmitter {
       })
 
       // Wire P2P data → HikRTP extractor → H.265 NALs → FFmpeg
-      const extractor = new HikRtpExtractor(this.config.verificationCode)
+      const extractor = new HikRtpExtractor()
       extractor.on('nalUnit', (nal: Buffer) => {
         this.bytesReceived += nal.length
         this.hlsPipe?.write(nal)

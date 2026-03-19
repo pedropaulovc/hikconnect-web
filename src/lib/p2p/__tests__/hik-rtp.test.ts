@@ -108,67 +108,68 @@ describe('HikRtpExtractor', () => {
       return packet
     }
 
-    it('decrypts first 16 bytes of NAL type 49 in-place', () => {
-      const extractor = new HikRtpExtractor(VERIFICATION_CODE)
+    it('unwraps type-49 NAL to restore original NAL type from extension', () => {
+      const extractor = new HikRtpExtractor()
       const nals: Buffer[] = []
       extractor.on('nalUnit', (nal: Buffer) => nals.push(nal))
 
-      // Create a plaintext NAL: type 1 (TRAIL_R)
-      const original = Buffer.alloc(32)
-      original[0] = 0x02 // type 1
-      original[1] = 0x01
-      original.fill(0xaa, 2)
+      // Build a type-49 NAL with extension encoding original type 19 (IDR_W_RADL)
+      // Extension byte: top 2 bits = 0 (no extra bytes), bottom 6 bits = 19
+      const type49Nal = Buffer.alloc(32)
+      type49Nal[0] = 0x62  // NAL type 49
+      type49Nal[1] = 0x01
+      type49Nal[2] = 0x13  // extension: type 19, 0 extra bytes
+      type49Nal[3] = 0x00  // flag byte
+      type49Nal.fill(0xaa, 4) // slice data
 
-      // Encrypt first 16 bytes
-      const encrypted = Buffer.from(original)
-      const enc = encryptBlock(original.subarray(0, 16))
-      enc.copy(encrypted, 0)
-
-      // Check: encrypted first byte must be type 49 for extractor to trigger decrypt
-      const encNalType = (encrypted[0] >> 1) & 0x3f
-      if (encNalType !== 49) {
-        // If encryption doesn't produce type 49, manually craft a known test vector
-        // Use a real-world pattern: type 49 header = 0x62 0x01
-        encrypted[0] = 0x62
-        encrypted[1] = 0x01
-      }
-
-      const packet = buildType49Packet(encrypted)
-      extractor.processPacket(packet)
-
-      // If we couldn't produce type 49 from encryption, extractor detected type 49
-      // and decrypted it — either way, the output should differ from input
-      expect(nals.length).toBe(1)
-    })
-
-    it('passes through NAL type 49 without decryption when no key', () => {
-      const extractor = new HikRtpExtractor() // no verification code
-      const nals: Buffer[] = []
-      extractor.on('nalUnit', (nal: Buffer) => nals.push(nal))
-
-      const fakeNal = Buffer.alloc(32)
-      fakeNal[0] = 0x62 // NAL type 49
-      fakeNal[1] = 0x01
-
-      const packet = Buffer.alloc(12 + 32)
+      const packet = Buffer.alloc(12 + type49Nal.length)
       packet.writeUInt16BE(0x8060, 0)
-      fakeNal.copy(packet, 12)
+      type49Nal.copy(packet, 12)
       extractor.processPacket(packet)
+      extractor.flush() // flush accumulated fragments
 
       expect(nals.length).toBe(1)
-      // Should still be type 49 (passed through, not decrypted)
       const nalType = (nals[0][4] >> 1) & 0x3f
-      expect(nalType).toBe(49)
+      expect(nalType).toBe(19) // IDR_W_RADL
     })
 
-    it('decryption is reversible with AES-128-ECB', () => {
-      // Verify the core crypto: encrypt then decrypt = original
-      const original = Buffer.from('0123456789abcdef') // 16 bytes
-      const encrypted = encryptBlock(original)
-      const decipher = createDecipheriv('aes-128-ecb', aesKey, null)
-      decipher.setAutoPadding(false)
-      const decrypted = Buffer.concat([decipher.update(encrypted), decipher.final()])
-      expect(decrypted).toEqual(original)
+    it('accumulates type-49 fragments and emits on non-49 boundary', () => {
+      const extractor = new HikRtpExtractor()
+      const nals: Buffer[] = []
+      extractor.on('nalUnit', (nal: Buffer) => nals.push(nal))
+
+      // First type-49 fragment (with extension: type 19)
+      const frag1 = Buffer.alloc(20)
+      frag1[0] = 0x62; frag1[1] = 0x01
+      frag1[2] = 0x13 // type 19, 0 extra bytes
+      frag1[3] = 0x00 // flag
+      frag1.fill(0xbb, 4)
+      const pkt1 = Buffer.alloc(12 + 20); pkt1.writeUInt16BE(0x8060, 0); frag1.copy(pkt1, 12)
+
+      // Second type-49 fragment (continuation)
+      const frag2 = Buffer.alloc(16)
+      frag2[0] = 0x62; frag2[1] = 0x01
+      frag2.fill(0xcc, 2)
+      const pkt2 = Buffer.alloc(12 + 16); pkt2.writeUInt16BE(0x8060, 0); frag2.copy(pkt2, 12)
+
+      // Non-type-49 packet (PPS) triggers flush
+      const pps = Buffer.alloc(12 + 4)
+      pps.writeUInt16BE(0x8060, 0)
+      pps[12] = 0x44; pps[13] = 0x01; pps[14] = 0xe0; pps[15] = 0x76 // PPS
+
+      extractor.processPacket(pkt1)
+      extractor.processPacket(pkt2)
+      expect(nals.length).toBe(0) // not flushed yet
+
+      extractor.processPacket(pps)
+      expect(nals.length).toBe(2) // flushed type-49 + PPS
+
+      // First emitted NAL should be assembled type-49 with type 19
+      const assembledType = (nals[0][4] >> 1) & 0x3f
+      expect(assembledType).toBe(19)
+      // Second is PPS
+      const ppsType = (nals[1][4] >> 1) & 0x3f
+      expect(ppsType).toBe(34)
     })
   })
 })

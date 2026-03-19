@@ -64,7 +64,7 @@ async function main() {
   })
 
   // Hik-RTP extractor: strips headers, emits H.265 NALs
-  const extractor = new HikRtpExtractor(process.env.VERIFICATION_CODE)
+  const extractor = new HikRtpExtractor()
 
   // HLS output directory
   const hlsDir = '/tmp/hls-output'
@@ -132,6 +132,7 @@ async function main() {
   await new Promise(resolve => setTimeout(resolve, 30000))
 
   clearInterval(statusInterval)
+  extractor.flush() // flush any remaining type-49 fragments
   rawDump.end()
   ffmpeg.stdin?.end()
   p2pSession.stop()
