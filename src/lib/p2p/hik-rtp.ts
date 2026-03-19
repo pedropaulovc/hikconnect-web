@@ -36,33 +36,32 @@ function deriveAesKey(verificationCode: string): Buffer {
  * The decrypted bytes contain the original NAL header + initial payload.
  */
 function decryptNal(data: Buffer, aesKey: Buffer): Buffer {
-  // Encrypted NAL structure:
-  //   [2B type-49 wrapper header] [16B encrypted block] [plaintext rest...]
-  // The encrypted block contains [2B original NAL header] [14B initial payload].
-  // After decryption, drop the type-49 wrapper and emit from byte 2 onward.
-  const WRAPPER_LEN = 2
+  // Encrypted NAL structure (from libPlayCtrl.so IDMXAESDecryptFrame + VPS testing):
+  //   [16B AES-ECB encrypted] [plaintext rest...]
+  // The first 16 bytes include the type-49 header bytes. After decryption,
+  // bytes 0-1 become the original NAL header, bytes 2-15 are initial payload.
   const AES_BLOCK_SIZE = 16
 
-  if (data.length < WRAPPER_LEN + AES_BLOCK_SIZE) {
+  if (data.length < AES_BLOCK_SIZE) {
     return data // too short to decrypt
   }
 
   const result = Buffer.from(data)
 
-  // Decrypt first 16 bytes after the wrapper header, in-place
-  const encryptedBlock = result.subarray(WRAPPER_LEN, WRAPPER_LEN + AES_BLOCK_SIZE)
+  // Decrypt first 16 bytes in-place (includes type-49 header → original NAL header)
+  const encryptedBlock = result.subarray(0, AES_BLOCK_SIZE)
   const decipher = createDecipheriv('aes-128-ecb', aesKey, null)
   decipher.setAutoPadding(false)
   const decrypted = decipher.update(encryptedBlock)
-  decrypted.copy(result, WRAPPER_LEN)
+  decrypted.copy(result, 0)
 
-  // Return from byte 2 onward: [original_hdr(2)] [decrypted_data(14)] [plaintext_rest...]
-  return result.subarray(WRAPPER_LEN)
+  return result
 }
 
 export class HikRtpExtractor extends EventEmitter {
   private nalCount = 0
   private aesKey: Buffer | null = null
+  private inEncryptedNal = false
 
   constructor(verificationCode?: string) {
     super()
@@ -88,11 +87,14 @@ export class HikRtpExtractor extends EventEmitter {
     const rtpPayload = payload.subarray(HIK_RTP_HEADER_LEN)
 
     // Find and strip sub-header (0x0d + 4 variable bytes + 8-byte sync pattern = 13 bytes)
-    // The sub-header typically starts at offset 0 but scan to be safe
+    // Sub-header byte 1 high nibble = type (0x80/0x90/0xa0/0xd0)
+    // Sub-header bytes 2-3 = stream identifier (video vs audio)
     let dataStart = 0
     if (rtpPayload[0] === 0x0d && rtpPayload.length > SUB_HEADER_LEN) {
       const subHigh = rtpPayload[1] & 0xf0
       if (subHigh === 0x80 || subHigh === 0x90 || subHigh === 0xa0 || subHigh === 0xd0) {
+        // Skip audio stream packets (sub-header byte 2 = 0x88 indicates audio)
+        if (rtpPayload[2] === 0x88) return
         dataStart = SUB_HEADER_LEN
       }
     }
@@ -123,18 +125,33 @@ export class HikRtpExtractor extends EventEmitter {
       return
     }
 
-    // Valid H.265 NAL types (VPS=32, SPS=33, PPS=34, slices=0-21)
-    if (nalType <= 40) {
+    // Valid H.265 NAL types: slices (0-21), VPS (32), SPS (33), PPS (34), SEI (35, 39-40)
+    // Types 22-31 and 36-38 are reserved/unused — skip to avoid passing audio as video
+    if (nalType <= 21 || (nalType >= 32 && nalType <= 35) || nalType === 39 || nalType === 40) {
       this.emitNal(data)
       return
     }
 
     // NAL type 49: Hikvision encrypted NAL — decrypt if key available
+    // Large NALs are fragmented across SRT packets. Each fragment repeats the
+    // type-49 header (0x62 0x01), but only the FIRST fragment has encrypted bytes.
+    // Track state: first type-49 after a non-49 packet = first fragment (decrypt).
+    // Subsequent type-49 packets = continuations (strip wrapper, emit raw body).
     if (nalType === HIK_ENCRYPTED_NAL_TYPE && this.aesKey) {
-      const decrypted = decryptNal(data, this.aesKey)
-      this.emitNal(decrypted)
+      if (!this.inEncryptedNal) {
+        // First fragment of a new encrypted NAL — decrypt
+        this.inEncryptedNal = true
+        const decrypted = decryptNal(data, this.aesKey)
+        this.emitNal(decrypted)
+      } else {
+        // Continuation fragment: strip type-49 wrapper, emit raw body (no start code)
+        this.emit('nalUnit', data.subarray(2))
+      }
       return
     }
+
+    // Any non-type-49 NAL resets the encrypted fragment state
+    this.inEncryptedNal = false
 
     // Hikvision custom NAL types (48-63 range): pass through
     if (nalType >= 48) {
