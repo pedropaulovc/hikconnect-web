@@ -26,7 +26,7 @@ export default function PlaybackPage({ params }: { params: Promise<{ serial: str
     try {
       const res = await fetch(buildRecordingsUrl(serial, Number(ch), date))
       const data = await res.json()
-      setRecordings(data.recordings ?? [])
+      setRecordings(data.files ?? [])
       setState('idle')
     } catch {
       setError('Failed to load recordings')
