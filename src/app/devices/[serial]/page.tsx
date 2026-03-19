@@ -19,7 +19,7 @@ export default function CameraListPage({ params }: { params: Promise<{ serial: s
   useEffect(() => {
     fetch(`/api/devices/${serial}/cameras`)
       .then(res => res.json())
-      .then(data => setCameras(data.cameras ?? []))
+      .then(data => setCameras((data.cameras ?? []).sort((a: Camera, b: Camera) => a.channelNo - b.channelNo)))
       .catch(() => setError('Failed to load cameras'))
   }, [serial])
 

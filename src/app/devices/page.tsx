@@ -33,9 +33,9 @@ export default function DevicesPage() {
             <Link key={d.deviceSerial} href={`/devices/${d.deviceSerial}`} className={styles.card}>
               <div className={styles.cardHeader}>
                 <span className={`${styles.dot} ${isDeviceOnline(d.status) ? styles.online : styles.offline}`} />
-                <span>{d.deviceName}</span>
+                <span>{d.deviceName || d.deviceSerial}</span>
               </div>
-              <div className={styles.serial}>{d.deviceSerial}</div>
+              {d.deviceName && <div className={styles.serial}>{d.deviceSerial}</div>}
             </Link>
           ))}
         </div>
