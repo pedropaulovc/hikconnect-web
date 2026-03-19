@@ -918,7 +918,7 @@ export class P2PSession extends EventEmitter {
     }
   }
 
-  private handleSrtInduction(buf: Buffer, peerSocketId: number, initSeq: number, mtu: number, window: number): void {
+  private handleSrtInduction(_buf: Buffer, peerSocketId: number, initSeq: number, mtu: number, window: number): void {
     // Generate a SYN cookie based on peer info
     const synCookie = (this.sourceId ^ peerSocketId ^ timestamp32()) >>> 0
 

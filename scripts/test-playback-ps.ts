@@ -7,7 +7,7 @@
  * Usage: npx tsx scripts/test-playback-ps.ts [startTime]
  * Works behind NAT — no public IP or VPS required.
  */
-import { readFileSync, mkdirSync, writeFileSync, createWriteStream } from 'fs'
+import { readFileSync, mkdirSync, createWriteStream } from 'fs'
 
 const envFile = readFileSync('.env.local', 'utf-8')
 for (const line of envFile.split('\n')) {
