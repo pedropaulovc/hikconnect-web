@@ -44,7 +44,7 @@ export default function VideoPlayer({ url, mode }: { url: string; mode?: 'live' 
 
   return (
     <div className={styles.container}>
-      <video ref={videoRef} className={styles.video} muted playsInline />
+      <video ref={videoRef} className={styles.video} controls autoPlay muted playsInline />
     </div>
   )
 }
