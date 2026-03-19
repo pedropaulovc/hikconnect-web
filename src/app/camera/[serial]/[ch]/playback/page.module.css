@@ -83,6 +83,12 @@
   margin-top: 8px;
 }
 
+.noRecordings {
+  color: #888;
+  margin-top: 12px;
+  font-size: 14px;
+}
+
 .error {
   color: #f87171;
   margin-top: 12px;

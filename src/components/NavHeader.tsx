@@ -31,16 +31,19 @@ export default function NavHeader({ crumbs }: { crumbs: Crumb[] }) {
 
   return (
     <nav className={styles.header}>
-      {items.map((item, i) => (
-        <span key={i}>
-          {item.isLink ? (
-            <Link href={item.href!} className={styles.link}>{item.label}</Link>
-          ) : (
-            <span className={styles.current}>{item.label}</span>
-          )}
-          {item.separator && <span className={styles.separator}>{item.separator}</span>}
-        </span>
-      ))}
+      <div className={styles.crumbs}>
+        {items.map((item, i) => (
+          <span key={i}>
+            {item.isLink ? (
+              <Link href={item.href!} className={styles.link}>{item.label}</Link>
+            ) : (
+              <span className={styles.current}>{item.label}</span>
+            )}
+            {item.separator && <span className={styles.separator}>{item.separator}</span>}
+          </span>
+        ))}
+      </div>
+      <Link href="/" className={styles.logout}>Logout</Link>
     </nav>
   )
 }

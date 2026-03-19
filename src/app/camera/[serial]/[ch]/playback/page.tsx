@@ -18,15 +18,18 @@ export default function PlaybackPage({ params }: { params: Promise<{ serial: str
   const [playlistUrl, setPlaylistUrl] = useState('')
   const [activeRecording, setActiveRecording] = useState<Recording | null>(null)
   const [error, setError] = useState('')
+  const [hasLoaded, setHasLoaded] = useState(false)
 
   const loadRecordings = async () => {
     if (!date) return
     setState('loading-recordings')
     setError('')
+    setHasLoaded(false)
     try {
       const res = await fetch(buildRecordingsUrl(serial, Number(ch), date))
       const data = await res.json()
       setRecordings(data.files ?? [])
+      setHasLoaded(true)
       setState('idle')
     } catch {
       setError('Failed to load recordings')
@@ -112,6 +115,10 @@ export default function PlaybackPage({ params }: { params: Promise<{ serial: str
 
         {state === 'playing' && (
           <button onClick={stopStream} className={styles.stopButton}>Stop Playback</button>
+        )}
+
+        {hasLoaded && recordings.length === 0 && (
+          <p className={styles.noRecordings}>No recordings found for {date}</p>
         )}
 
         {recordings.length > 0 && date && (
