@@ -4,7 +4,8 @@
  * Playback data from Hikvision NVR uses MPEG Program Stream container
  * (recordings stored as .ps files), NOT raw H.265 NALs like live preview.
  *
- * Usage: PUBLIC_IP=x.x.x.x npx tsx scripts/test-playback-ps.ts [startTime]
+ * Usage: npx tsx scripts/test-playback-ps.ts [startTime]
+ * Works behind NAT — no public IP or VPS required.
  */
 import { readFileSync, mkdirSync, writeFileSync, createWriteStream } from 'fs'
 
@@ -32,13 +33,17 @@ async function main() {
   })
   console.log('Logged in:', session.apiDomain)
 
-  // Parse start time
-  let startTime = process.argv[2] || '2026-03-15T17:30:00'
-  const start = new Date(startTime)
-  const stop = new Date(start.getTime() + 60_000)
-  const fmt = (d: Date) => d.toISOString().replace(/\.\d+Z$/, '').replace('Z', '')
-  startTime = fmt(start)
-  const stopTime = fmt(stop)
+  // Parse start time — NVR expects device-local time, NOT UTC.
+  // Pass the string literally without Date conversion to avoid timezone shift.
+  const startTime = process.argv[2] || '2026-03-15T17:30:00'
+  // Add 1 minute for stop time by simple string arithmetic
+  const [datePart, timePart] = startTime.split('T')
+  const [hh, mm, ss] = timePart.split(':').map(Number)
+  const totalSec = hh * 3600 + (mm + 1) * 60 + ss
+  const stopH = String(Math.floor(totalSec / 3600)).padStart(2, '0')
+  const stopM = String(Math.floor((totalSec % 3600) / 60)).padStart(2, '0')
+  const stopS = String(totalSec % 60).padStart(2, '0')
+  const stopTime = `${datePart}T${stopH}:${stopM}:${stopS}`
   console.log(`Playback range: ${startTime} → ${stopTime}\n`)
 
   // P2P config
@@ -67,7 +72,7 @@ async function main() {
     channelNo: CHANNEL,
     streamType: 0,
     streamTokens: tokenData.tokenArray || [],
-    localPublicIp: process.env.PUBLIC_IP!,
+    localPublicIp: process.env.PUBLIC_IP, // optional — P2P server derives NAT address from UDP source
     busType: 2,
     startTime,
     stopTime,

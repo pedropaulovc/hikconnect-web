@@ -14,14 +14,9 @@ import { P2PSession } from '../src/lib/p2p/p2p-session'
 
 const P2P_SERVER_KEY = Buffer.from('e4465f2d011ebf9d85eb32d46e1549bdf64c171d616a132afaba4b4d348a39d5', 'hex')
 
-async function getPublicIp(): Promise<string> {
-  try {
-    const resp = await fetch('https://api.ipify.org?format=json')
-    const data = await resp.json() as { ip: string }
-    return data.ip
-  } catch {
-    return '0.0.0.0'
-  }
+/** Optional public IP hint — P2P server derives NAT address from UDP source regardless. */
+function getPublicIpHint(): string | undefined {
+  return process.env.PUBLIC_IP
 }
 
 async function main() {
@@ -72,7 +67,7 @@ async function main() {
     streamType: 1,
     streamTokens: tokens,
     // Auto-detect public IP or use env var
-    localPublicIp: process.env.PUBLIC_IP || await getPublicIp(),
+    localPublicIp: getPublicIpHint(),
   })
 
   console.log('Local public IP:', p2pSession['config'].localPublicIp)

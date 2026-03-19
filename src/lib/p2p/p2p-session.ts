@@ -89,6 +89,7 @@ export class P2PSession extends EventEmitter {
   // Device peer address — updated when device punches through (0x0C00)
   private devicePeerIp: string | null = null
   private devicePeerPort: number | null = null
+  private deviceStreamPort: number | null = null // parsed from P2P_SETUP response
   private punchComplete = false
   // Session key shared between P2P_SETUP and PLAY_REQUEST
   private currentSessionKey: string = ''
@@ -551,8 +552,13 @@ export class P2PSession extends EventEmitter {
   private holePunch(): void {
     // Send empty packets to punch through NAT
     const punch = Buffer.alloc(1)
-    for (let i = 0; i < 5; i++) {
-      this.sendToDevice(punch)
+    // Punch to configured port AND discovered stream port
+    const ports = new Set([this.config.devicePublicPort])
+    if (this.deviceStreamPort) ports.add(this.deviceStreamPort)
+    for (const port of ports) {
+      for (let i = 0; i < 5; i++) {
+        this.sendTo(punch, port, this.config.devicePublicIp)
+      }
     }
   }
 
@@ -742,6 +748,11 @@ export class P2PSession extends EventEmitter {
       console.log(`  attr tag=0x${attr.tag.toString(16)} len=${attr.value.length} val=${attr.value.toString('hex')}`)
     }
 
+    // P2P_SETUP response (0x0B03) — extract device stream port and pre-punch
+    if (msg.msgType === 0x0b03) {
+      this.handleSetupResponse(msg)
+    }
+
     // Handle device hole-punch request (0x0C00)
     if (msg.msgType === Opcode.PUNCH_REQUEST) {
       this.handlePunchRequest(msg, fromAddr, fromPort)
@@ -755,6 +766,47 @@ export class P2PSession extends EventEmitter {
     }
 
     this.emit('v3message', msg)
+  }
+
+  /**
+   * Parse device stream port from P2P_SETUP response and pre-punch.
+   * The 0xb03 response contains tag 0xff with sub-TLV 0x74 = "IP:PORT".
+   * We punch to the device's public IP on this port to create a NAT mapping
+   * BEFORE the device sends 0x0C00, allowing it to reach us through NAT.
+   */
+  private handleSetupResponse(msg: V3Message): void {
+    const ffAttr = msg.attributes.find(a => a.tag === 0xff)
+    if (!ffAttr) return
+
+    // Parse sub-TLVs within tag 0xff
+    const data = ffAttr.value
+    let offset = 0
+    while (offset + 2 <= data.length) {
+      const tag = data[offset]
+      const len = data[offset + 1]
+      if (offset + 2 + len > data.length) break
+
+      if (tag === 0x74) {
+        // tag 0x74 = device address "IP:PORT"
+        const addrStr = data.subarray(offset + 2, offset + 2 + len).toString('ascii')
+        const colonIdx = addrStr.lastIndexOf(':')
+        if (colonIdx > 0) {
+          const devicePort = parseInt(addrStr.substring(colonIdx + 1), 10)
+          if (devicePort > 0 && devicePort < 65536) {
+            console.log(`[P2P] Device stream port from P2P_SETUP: ${devicePort} (${addrStr})`)
+            this.deviceStreamPort = devicePort
+            // Pre-punch: send packets to device's PUBLIC IP on this port
+            // This creates a NAT mapping so the device's 0x0C00 can reach us
+            const punch = Buffer.alloc(1)
+            for (let i = 0; i < 5; i++) {
+              this.sendTo(punch, devicePort, this.config.devicePublicIp)
+            }
+            console.log(`[P2P] Pre-punched to ${this.config.devicePublicIp}:${devicePort}`)
+          }
+        }
+      }
+      offset += 2 + len
+    }
   }
 
   private handlePunchRequest(msg: V3Message, fromAddr: string, fromPort: number): void {

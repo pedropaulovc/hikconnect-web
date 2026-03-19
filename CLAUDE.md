@@ -99,46 +99,29 @@ npm test -- --run    # Run all tests (98 pass, 1 skipped)
 
 ### Protocol Testing
 
+No VPS required — P2P server derives our NAT-mapped address from UDP packet source. Works behind home/office NAT.
+
 ```bash
-npx tsx scripts/test-p2p-dynamic.ts     # Full P2P test: login → P2P_SETUP → PLAY_REQUEST (needs VPS with public IP)
+npx tsx scripts/test-p2p-dynamic.ts     # Full P2P test: login → P2P_SETUP → PLAY_REQUEST
+npx tsx scripts/test-p2p-to-ffmpeg.ts   # Live stream → H.265 → FFmpeg → HLS
+npx tsx scripts/test-playback-ps.ts     # Playback → MPEG-PS → FFmpeg → MP4
 npx tsx scripts/test-p2p-v2.ts          # Legacy P2P server handshake test
 npx tsx scripts/test-vtm-connect.ts     # Test VTM relay connection
 ```
 
-### Running the Full Pipeline
-
-The P2P video streaming pipeline requires a server with a public IP (the device needs to UDP hole-punch to us). Deploy to a VPS:
-
-```bash
-# 1. Create VPS
-hcloud server create --name hikp2p --type cpx11 --location ash --image ubuntu-24.04 --ssh-key hikconnect
-
-# 2. Deploy + install
-rsync -az --exclude node_modules --exclude .next --exclude .git . root@IP:/root/hikconnect-web/
-ssh root@IP 'curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && apt-get install -y nodejs ffmpeg'
-ssh root@IP 'cd /root/hikconnect-web && npm install'
-
-# 3. Test P2P pipeline (saves H.265 + generates HLS)
-ssh root@IP 'cd /root/hikconnect-web && PUBLIC_IP=<VPS_IP> npx tsx scripts/test-p2p-to-ffmpeg.ts'
-
-# 4. Run web app (Next.js on port 3000)
-ssh root@IP 'cd /root/hikconnect-web && PUBLIC_IP=<VPS_IP> npx next dev --hostname 0.0.0.0'
-
-# 5. Cleanup
-hcloud server delete hikp2p
-```
-
 **Important:** The NVR limits concurrent P2P streams. Wait 30+ seconds between connection attempts. After many rapid connections (~20), the device may need hours of cooldown or a reboot.
 
-### VPS for P2P Testing
+### NAT Traversal
 
-```bash
-hcloud server create --name hikp2p --type cpx11 --location ash --image ubuntu-24.04 --ssh-key hikconnect
-# Deploy: rsync -az --exclude node_modules --exclude .next --exclude .git . root@IP:/root/hikconnect-web/
-# Install: ssh root@IP 'curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && apt-get install -y nodejs'
-# Test: ssh root@IP 'cd /root/hikconnect-web && npm install && npx tsx scripts/test-p2p-dynamic.ts'
-# Cleanup: hcloud server delete hikp2p
-```
+The P2P protocol works behind NAT without a public IP:
+1. Our UDP socket sends P2P_SETUP to the P2P server
+2. P2P server observes our NAT-mapped address from the packet source (like STUN)
+3. P2P server tells the device where we are
+4. Device sends hole-punch (0x0C00) to our NAT-mapped address
+5. Our NAT allows the response because we already sent outbound from the same port
+6. PLAY_REQUEST is also relayed via TRANSFOR_DATA (0x0B04) as fallback
+
+Optional: set `PUBLIC_IP=x.x.x.x` to provide a hint, but this is not required.
 
 ### Android Emulator
 
