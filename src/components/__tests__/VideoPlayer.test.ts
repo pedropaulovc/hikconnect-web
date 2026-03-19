@@ -4,12 +4,12 @@ import { getHlsConfig } from '../VideoPlayer'
 describe('VideoPlayer HLS config', () => {
   describe('live mode config', () => {
     it('includes liveSyncDurationCount of 3', () => {
-      const config = getHlsConfig('live')
+      const config = getHlsConfig('live') as Record<string, unknown>
       expect(config.liveSyncDurationCount).toBe(3)
     })
 
     it('includes liveMaxLatencyDurationCount of 6', () => {
-      const config = getHlsConfig('live')
+      const config = getHlsConfig('live') as Record<string, unknown>
       expect(config.liveMaxLatencyDurationCount).toBe(6)
     })
   })
@@ -28,7 +28,7 @@ describe('VideoPlayer HLS config', () => {
 
   describe('default mode', () => {
     it('defaults to live mode when mode is omitted', () => {
-      const config = getHlsConfig()
+      const config = getHlsConfig() as Record<string, unknown>
       expect(config.liveSyncDurationCount).toBe(3)
       expect(config.liveMaxLatencyDurationCount).toBe(6)
     })

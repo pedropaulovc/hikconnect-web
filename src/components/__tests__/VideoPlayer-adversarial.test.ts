@@ -9,8 +9,8 @@ describe('VideoPlayer HLS config — adversarial', () => {
   })
 
   it('calling getHlsConfig twice returns fresh objects (no shared mutation)', () => {
-    const a = getHlsConfig('live')
-    const b = getHlsConfig('live')
+    const a = getHlsConfig('live') as Record<string, unknown>
+    const b = getHlsConfig('live') as Record<string, unknown>
     a.liveSyncDurationCount = 999
     expect(b.liveSyncDurationCount).toBe(3)
   })
@@ -23,14 +23,14 @@ describe('VideoPlayer HLS config — adversarial', () => {
   })
 
   it('live config values are numbers, not strings', () => {
-    const config = getHlsConfig('live')
+    const config = getHlsConfig('live') as Record<string, unknown>
     expect(typeof config.liveSyncDurationCount).toBe('number')
     expect(typeof config.liveMaxLatencyDurationCount).toBe('number')
   })
 
   it('does not include unexpected keys in live config', () => {
     const config = getHlsConfig('live')
-    const allowed = new Set(['liveSyncDurationCount', 'liveMaxLatencyDurationCount', 'enableWorker'])
+    const allowed = new Set(['liveSyncDurationCount', 'liveMaxLatencyDurationCount', 'enableWorker', 'manifestLoadingRetryDelay', 'manifestLoadingMaxRetry', 'levelLoadingRetryDelay', 'levelLoadingMaxRetry', 'fragLoadingRetryDelay', 'fragLoadingMaxRetry'])
     for (const key of Object.keys(config)) {
       expect(allowed.has(key)).toBe(true)
     }
