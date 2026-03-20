@@ -46,6 +46,19 @@
   font-size: 14px;
 }
 
+.qualitySelect {
+  padding: 8px 12px;
+  border: 1px solid #444;
+  border-radius: 4px;
+  background: #1a1a1a;
+  color: #fff;
+  font-size: 14px;
+}
+
+.qualitySelect:disabled {
+  opacity: 0.6;
+}
+
 .error {
   color: #f87171;
   margin-top: 12px;

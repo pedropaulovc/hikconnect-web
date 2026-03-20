@@ -2,9 +2,12 @@ import { spawn, ChildProcess } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 
+export type StreamQuality = 'sub' | 'main'
+
 export type HlsConfig = {
   outputDir: string
   segmentDuration?: number
+  quality?: StreamQuality
 }
 
 export class FfmpegHlsPipe {
@@ -45,29 +48,11 @@ export class FfmpegHlsPipe {
 
   private startFfmpeg(): void {
     const segDuration = this.config.segmentDuration ?? 2
+    const quality = this.config.quality ?? 'sub'
     this.started = true
 
-    this.process = spawn('ffmpeg', [
-      '-probesize', '500000',      // Analyze more data before giving up
-      '-analyzeduration', '2000000', // Analyze up to 2 seconds
-      '-err_detect', 'ignore_err', // Tolerate invalid NAL units
-      '-f', 'hevc',                // input format: raw H.265 Annex B
-      '-framerate', '25',          // Hint the framerate
-      '-i', 'pipe:0',             // stdin input
-      '-c:v', 'libx264',           // Re-encode to H.264 for browser compatibility
-      '-preset', 'ultrafast',     // Fastest encoding
-      '-tune', 'zerolatency',     // Low-latency streaming
-      '-vf', 'scale=640:360',      // Scale down 4K → 360p for real-time
-      '-crf', '30',               // Quality
-      '-g', '25',                  // Keyframe every second
-      '-sc_threshold', '0',        // Disable scene change detection
-      '-f', 'hls',
-      '-hls_time', String(segDuration),
-      '-hls_list_size', '10',
-      '-hls_flags', 'delete_segments+append_list',
-      '-hls_segment_filename', join(this.config.outputDir, 'seg_%03d.ts'),
-      this.playlistPath,
-    ], {
+    const args = this.buildFfmpegArgs(quality, segDuration)
+    this.process = spawn('ffmpeg', args, {
       stdio: ['pipe', 'pipe', 'pipe'],
     })
 
@@ -80,6 +65,44 @@ export class FfmpegHlsPipe {
       const line = data.toString().trim()
       if (line) console.log('[ffmpeg]', line)
     })
+  }
+
+  private buildFfmpegArgs(quality: StreamQuality, segDuration: number): string[] {
+    const inputArgs = [
+      '-probesize', '500000',
+      '-analyzeduration', '2000000',
+      '-err_detect', 'ignore_err',
+      '-f', 'hevc',
+      '-framerate', '25',
+      '-i', 'pipe:0',
+    ]
+
+    // Main stream: passthrough H.265 into fMP4 HLS (no transcode)
+    // Sub stream: transcode H.265→H.264 at 360p for lightweight playback
+    const videoArgs = quality === 'main'
+      ? ['-c:v', 'copy', '-tag:v', 'hvc1']
+      : [
+          '-c:v', 'libx264',
+          '-preset', 'ultrafast',
+          '-tune', 'zerolatency',
+          '-vf', 'scale=640:360',
+          '-crf', '30',
+          '-g', '25',
+          '-sc_threshold', '0',
+        ]
+
+    const segExt = quality === 'main' ? 'm4s' : 'ts'
+    const hlsArgs = [
+      '-f', 'hls',
+      '-hls_time', String(segDuration),
+      '-hls_list_size', '10',
+      '-hls_flags', 'delete_segments+append_list',
+      ...(quality === 'main' ? ['-hls_segment_type', 'fmp4'] : []),
+      '-hls_segment_filename', join(this.config.outputDir, `seg_%03d.${segExt}`),
+      this.playlistPath,
+    ]
+
+    return [...inputArgs, ...videoArgs, ...hlsArgs]
   }
 
   stop(): void {

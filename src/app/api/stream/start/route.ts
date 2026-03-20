@@ -5,7 +5,7 @@ import { LiveStream } from '@/lib/p2p/live-stream'
 import { P2P_SERVER_KEY } from '@/lib/p2p/p2p-session'
 import { getAuthenticatedClient } from '@/lib/hikconnect/getClient'
 import { extractUserId } from '@/lib/hikconnect/client'
-import { sessions } from '../sessions'
+import { sessions, deviceLastStop, DEVICE_COOLDOWN_MS } from '../sessions'
 
 export async function POST(req: Request) {
   const body = await req.json()
@@ -17,6 +17,19 @@ export async function POST(req: Request) {
 
   if (!deviceSerial || typeof deviceSerial !== 'string') {
     return NextResponse.json({ error: 'deviceSerial is required' }, { status: 400 })
+  }
+
+  // Enforce per-device cooldown — NVR needs time to release P2P stream slots after teardown
+  const lastStop = deviceLastStop.get(deviceSerial)
+  if (lastStop) {
+    const elapsed = Date.now() - lastStop
+    if (elapsed < DEVICE_COOLDOWN_MS) {
+      const remaining = Math.ceil((DEVICE_COOLDOWN_MS - elapsed) / 1000)
+      return NextResponse.json(
+        { error: `Device needs ${remaining}s cooldown before next stream` },
+        { status: 429 },
+      )
+    }
   }
 
   const sessionId = `${deviceSerial}-${channel}-${Date.now()}`
@@ -47,6 +60,7 @@ export async function POST(req: Request) {
       hls: {
         outputDir: hlsDir,
         segmentDuration: 2,
+        quality: streamType === 0 ? 'main' as const : 'sub' as const,
       },
     })
 

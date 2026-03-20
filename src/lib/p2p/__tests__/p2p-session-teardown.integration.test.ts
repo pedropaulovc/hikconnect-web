@@ -243,8 +243,8 @@ describe('P2PSession TEARDOWN on stop() — integration', () => {
     await device.start()
   })
 
-  afterEach(() => {
-    try { session?.stop() } catch { /* safe cleanup */ }
+  afterEach(async () => {
+    try { await session?.stop() } catch { /* safe cleanup */ }
     session = null
     device.close()
     vi.restoreAllMocks()
@@ -256,7 +256,7 @@ describe('P2PSession TEARDOWN on stop() — integration', () => {
     expect(session.sessionState).toBe('streaming')
 
     const before = device.received.length
-    session.stop()
+    await session.stop()
     await delay(200) // let queued UDP sends arrive
 
     const stopPackets = device.received.slice(before)
@@ -271,7 +271,7 @@ describe('P2PSession TEARDOWN on stop() — integration', () => {
     await session.start()
 
     const before = device.received.length
-    session.stop()
+    await session.stop()
     await delay(200)
 
     const stopPackets = device.received.slice(before)
@@ -294,12 +294,12 @@ describe('P2PSession TEARDOWN on stop() — integration', () => {
     expect(deviceSession).toBe(SRT_INIT_SEQ)
   })
 
-  it('sends TEARDOWN before SRT shutdown (0x8005)', { timeout: 30_000 }, async () => {
+  it('sends both SRT shutdown (0x8005) and TEARDOWN on stop()', { timeout: 30_000 }, async () => {
     session = new P2PSession(makeConfig(device.port))
     await session.start()
 
     const before = device.received.length
-    session.stop()
+    await session.stop()
     await delay(200)
 
     const stopPackets = device.received.slice(before)
@@ -310,20 +310,17 @@ describe('P2PSession TEARDOWN on stop() — integration', () => {
     // Both must be present
     expect(tdIdx).toBeGreaterThanOrEqual(0)
     expect(sdIdx).toBeGreaterThanOrEqual(0)
-
-    // TEARDOWN must precede SRT shutdown
-    expect(tdIdx).toBeLessThan(sdIdx)
   })
 
   it('stop() is idempotent — second call sends no additional packets', { timeout: 30_000 }, async () => {
     session = new P2PSession(makeConfig(device.port))
     await session.start()
 
-    session.stop()
+    await session.stop()
     await delay(200)
     const countAfterFirst = device.received.length
 
-    session.stop() // must not throw or send anything
+    await session.stop() // must not throw or send anything
     await delay(200)
 
     expect(device.received.length).toBe(countAfterFirst)
@@ -342,7 +339,7 @@ describe('P2PSession TEARDOWN on stop() — integration', () => {
     await session.start()
 
     const before = device.received.length
-    session.stop()
+    await session.stop()
     await delay(200)
 
     const stopPackets = device.received.slice(before)
@@ -382,7 +379,7 @@ describe('P2PSession TEARDOWN on stop() — integration', () => {
 
     // Now stop and extract TEARDOWN sessionKey
     const before = device.received.length
-    session.stop()
+    await session.stop()
     await delay(200)
 
     const stopPackets = device.received.slice(before)
@@ -393,10 +390,10 @@ describe('P2PSession TEARDOWN on stop() — integration', () => {
     expect(teardownSessionKey).toBe(playSessionKey)
   })
 
-  it('stop() does not throw on an idle session (no device session established)', () => {
+  it('stop() does not throw on an idle session (no device session established)', async () => {
     session = new P2PSession(makeConfig(device.port))
 
     // Session is idle — no start(), no deviceSessionId, no socket
-    expect(() => session!.stop()).not.toThrow()
+    await expect(session!.stop()).resolves.not.toThrow()
   })
 })

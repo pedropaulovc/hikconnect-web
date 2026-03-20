@@ -96,6 +96,9 @@ export class P2PSession extends EventEmitter {
   // SRT handshake state
   private srtSynCookie: number | null = null
   private srtPeerSocketId: number | null = null
+  // Track all SRT peer sessions — device opens multiple (video + control).
+  // Maps our destination socket ID → { peerSocketId, lastAckSeq }
+  private srtSessions = new Map<number, { peerSocketId: number; lastAckSeq: number }>()
 
   constructor(config: P2PSessionConfig) {
     super()
@@ -156,24 +159,8 @@ export class P2PSession extends EventEmitter {
     this.transition('streaming')
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     if (this.state === 'stopped') return
-
-    // Send TEARDOWN (0x0C04) to cleanly release the device session
-    if (this.socket && this.dataSessionId !== 0) {
-      try { this.sendTeardown() } catch {}
-    }
-
-    // Send SRT shutdown to cleanly release the device's stream slot
-    if (this.srtPeerSocketId) {
-      const shutdown = Buffer.alloc(16)
-      shutdown.writeUInt16BE(0x8005, 0) // F=1, control type=5 (shutdown)
-      shutdown.writeUInt16BE(0, 2)
-      shutdown.writeUInt32BE(0, 4)
-      shutdown.writeUInt32BE(timestamp32(), 8)
-      shutdown.writeUInt32BE(this.srtPeerSocketId, 12)
-      try { this.sendToDevice(shutdown) } catch {}
-    }
 
     this.stopSrtAckTimer()
     if (this.keepaliveInterval) {
@@ -181,13 +168,44 @@ export class P2PSession extends EventEmitter {
       this.keepaliveInterval = null
     }
 
-    // Defer socket close to let queued UDP sends (TEARDOWN, SRT shutdown) flush
+    // Send SRT shutdown + TEARDOWN with retries to ensure device releases the stream slot.
+    // UDP is lossy — a single send may not arrive, leaving a zombie session on the device.
+    const retries = 3
+    const retryDelay = 500
+    for (let i = 0; i < retries; i++) {
+      if (!this.socket) break
+
+      if (this.srtPeerSocketId) {
+        const shutdown = Buffer.alloc(16)
+        shutdown.writeUInt16BE(0x8005, 0) // F=1, control type=5 (shutdown)
+        shutdown.writeUInt16BE(0, 2)
+        shutdown.writeUInt32BE(0, 4)
+        shutdown.writeUInt32BE(timestamp32(), 8)
+        shutdown.writeUInt32BE(this.srtPeerSocketId, 12)
+        try { this.sendToDevice(shutdown) } catch {}
+      }
+
+      if (this.dataSessionId !== 0) {
+        try { this.sendTeardown() } catch {}
+      }
+
+      if (i < retries - 1) {
+        await delay(retryDelay)
+      }
+    }
+
+    // Wait for device to process teardown before closing socket
+    await delay(1000)
+
     const sock = this.socket
     this.socket = null
     this.transition('stopped')
     if (sock) {
-      setImmediate(() => { try { sock.close() } catch {} })
+      try { sock.close() } catch {}
     }
+
+    // Notify that teardown is complete — callers can track per-device cooldown
+    this.emit('teardownComplete', { deviceSerial: this.config.deviceSerial })
   }
 
   // -- P2P Server Contact --
@@ -943,14 +961,19 @@ export class P2PSession extends EventEmitter {
     pkt.writeUInt32BE(synCookie, 44) // SYN cookie
 
     this.srtSynCookie = synCookie
-    this.srtPeerSocketId = peerSocketId
+    // Only set peer socket ID for the first SRT session (video data).
+    // The device opens a second SRT session (control/metadata) with a different socket ID.
+    // Overwriting would cause ACKs to go to the wrong session, stalling the video stream.
+    if (this.srtPeerSocketId === null) {
+      this.srtPeerSocketId = peerSocketId
+    }
 
     this.sendToDevice(pkt)
-    console.log(`[SRT] Sent induction response, cookie=0x${synCookie.toString(16)}, ourSocketId=0x${this.sourceId.toString(16)}`)
+    console.log(`[SRT] Sent induction response, cookie=0x${synCookie.toString(16)}, ourSocketId=0x${this.sourceId.toString(16)}, peerSocket=0x${peerSocketId.toString(16)} primary=0x${(this.srtPeerSocketId ?? 0).toString(16)}`)
   }
 
   private handleSrtConclusion(_buf: Buffer, peerSocketId: number): void {
-    console.log(`[SRT] CONCLUSION received (${_buf.length}B)`)
+    console.log(`[SRT] CONCLUSION received (${_buf.length}B) peerSocket=0x${peerSocketId.toString(16)}`)
 
     // The SRT connection is now established
     // Set data session from the initial sequence number
@@ -958,6 +981,13 @@ export class P2PSession extends EventEmitter {
     if (this.dataSessionId === 0) {
       this.dataSessionId = initSeq
       this.emit('dataSessionEstablished', initSeq)
+    }
+
+    // Register this SRT session for per-session ACK tracking.
+    // The device opens multiple SRT sessions (video + control) with different socket IDs.
+    // Each needs ACKs with the correct peerSocketId and sequence numbers.
+    if (!this.srtSessions.has(peerSocketId)) {
+      this.srtSessions.set(peerSocketId, { peerSocketId, lastAckSeq: 0 })
     }
 
     // Send our conclusion response with SRT extension
@@ -1004,8 +1034,20 @@ export class P2PSession extends EventEmitter {
     if (this.srtAckInterval) return
     // SRT spec: ACK every 10ms
     this.srtAckInterval = setInterval(() => {
+      // Send per-session ACKs with correct sequence numbers.
+      // Each SRT session has its own sequence space — sending the wrong
+      // sequence to a session causes the device to stop sending data.
+      if (this.srtSessions.size > 0) {
+        for (const sess of this.srtSessions.values()) {
+          if (sess.lastAckSeq > 0) {
+            this.sendSrtAckTo(sess.lastAckSeq, sess.peerSocketId)
+          }
+        }
+        return
+      }
+      // Fallback for sessions without the map
       if (this.lastAckSeq > 0) {
-        this.sendSrtAck(this.lastAckSeq)
+        this.sendSrtAckTo(this.lastAckSeq, this.srtPeerSocketId ?? 0)
       }
     }, 10)
   }
@@ -1034,8 +1076,32 @@ export class P2PSession extends EventEmitter {
       console.log(`[SRT-DATA] #${this.srtDataCount} seq=${seqNum} payload=${payload.length}B total=${this.srtTotalBytes}B first16=${payload.subarray(0, Math.min(16, payload.length)).toString('hex')}`)
     }
 
-    // Track highest received sequence for ACK timer
-    this.lastAckSeq = seqNum
+    // Route sequence number to the correct SRT session.
+    // Each SRT session has its own sequence space. Match by proximity first,
+    // then fall back to the first uninitialized session.
+    let matched = false
+    // Pass 1: find a session whose sequence space is close to this packet
+    for (const sess of this.srtSessions.values()) {
+      if (sess.lastAckSeq !== 0 && Math.abs(seqNum - sess.lastAckSeq) < 100000) {
+        sess.lastAckSeq = seqNum
+        matched = true
+        break
+      }
+    }
+    // Pass 2: assign to first uninitialized session
+    if (!matched) {
+      for (const sess of this.srtSessions.values()) {
+        if (sess.lastAckSeq === 0) {
+          sess.lastAckSeq = seqNum
+          matched = true
+          if (this.srtDataCount <= 10) {
+            console.log(`[SRT-ROUTE] seq=${seqNum} → new session peer=0x${sess.peerSocketId.toString(16)} (sessions=${this.srtSessions.size})`)
+          }
+          break
+        }
+      }
+    }
+    if (!matched) this.lastAckSeq = seqNum
 
     // Start the ACK timer on first data packet
     this.startSrtAckTimer()
@@ -1044,27 +1110,25 @@ export class P2PSession extends EventEmitter {
     this.emit('data', payload)
   }
 
-  private sendSrtAck(lastRecvSeq: number): void {
-    // SRT ACK control packet (type=2)
-    // From SRT spec: ACK informs sender about received data
-    const pkt = Buffer.alloc(44) // Full ACK with 7 fields (28 bytes of ACK data)
+  private sendSrtAckTo(lastRecvSeq: number, peerSocketId: number): void {
+    const pkt = Buffer.alloc(44)
     pkt.writeUInt16BE(0x8002, 0) // F=1, control type=2 (ACK)
     pkt.writeUInt16BE(0, 2)      // subtype
     pkt.writeUInt32BE(this.srtAckNumber++, 4) // ACK number (increments each ACK)
     pkt.writeUInt32BE(timestamp32(), 8) // timestamp
-    pkt.writeUInt32BE(this.srtPeerSocketId ?? 0, 12) // dest socket ID
+    pkt.writeUInt32BE(peerSocketId, 12) // dest socket ID
 
     // ACK data (from SRT spec section 3.2.2):
     pkt.writeUInt32BE((lastRecvSeq + 1) & 0x7fffffff, 16) // Last ACK'd seq + 1
-    pkt.writeUInt32BE(8000, 20)  // RTT (microseconds) — reasonable estimate
+    pkt.writeUInt32BE(8000, 20)  // RTT (microseconds)
     pkt.writeUInt32BE(1000, 24)  // RTT variance (microseconds)
     pkt.writeUInt32BE(8192, 28)  // Available buffer size (packets)
     pkt.writeUInt32BE(1000, 32)  // Packets receiving rate (per second)
     pkt.writeUInt32BE(100000, 36) // Estimated link capacity (packets/s)
-    pkt.writeUInt32BE(0, 40)     // Receiving rate (bytes/s) — optional
+    pkt.writeUInt32BE(0, 40)     // Receiving rate (bytes/s)
 
     if (this.srtAckNumber <= 5 || this.srtAckNumber % 50 === 0) {
-      console.log(`[SRT-ACK] #${this.srtAckNumber - 1} ackSeq=${lastRecvSeq + 1} peerSocket=0x${(this.srtPeerSocketId ?? 0).toString(16)} dataCount=${this.srtDataCount}`)
+      console.log(`[SRT-ACK] #${this.srtAckNumber - 1} ackSeq=${lastRecvSeq + 1} peerSocket=0x${peerSocketId.toString(16)} dataCount=${this.srtDataCount}`)
     }
     this.sendToDevice(pkt)
   }
