@@ -77,27 +77,27 @@ export class FfmpegHlsPipe {
       '-i', 'pipe:0',
     ]
 
-    // Main stream: passthrough H.265 into fMP4 HLS (no transcode)
-    // Sub stream: transcode H.265→H.264 at 360p for lightweight playback
-    const videoArgs = quality === 'main'
-      ? ['-c:v', 'copy', '-tag:v', 'hvc1']
-      : [
-          '-c:v', 'libx264',
-          '-preset', 'ultrafast',
-          '-tune', 'zerolatency',
-          '-vf', 'scale=640:360',
-          '-crf', '30',
-          '-g', '25',
-          '-sc_threshold', '0',
-        ]
+    // Both streams transcode H.265→H.264 (browsers don't support H.265 in HLS).
+    // Main: 4K source → 720p output (best balance of quality vs CPU for realtime)
+    // Sub: sub-stream source → 360p output (lightweight)
+    const scale = quality === 'main' ? '1280:720' : '640:360'
+    const crf = quality === 'main' ? '28' : '30'
+    const videoArgs = [
+      '-c:v', 'libx264',
+      '-preset', 'ultrafast',
+      '-tune', 'zerolatency',
+      '-vf', `scale=${scale}`,
+      '-crf', crf,
+      '-g', '25',
+      '-sc_threshold', '0',
+    ]
 
-    const segExt = quality === 'main' ? 'm4s' : 'ts'
+    const segExt = 'ts'
     const hlsArgs = [
       '-f', 'hls',
       '-hls_time', String(segDuration),
       '-hls_list_size', '10',
       '-hls_flags', 'delete_segments+append_list',
-      ...(quality === 'main' ? ['-hls_segment_type', 'fmp4'] : []),
       '-hls_segment_filename', join(this.config.outputDir, `seg_%03d.${segExt}`),
       this.playlistPath,
     ]

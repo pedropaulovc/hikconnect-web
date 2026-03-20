@@ -12,8 +12,11 @@ export async function POST(req: Request) {
   const {
     deviceSerial,
     channel = 1,
-    streamType = 1,
+    quality = 'sub',
   } = body
+  // Hik-Connect device stream types (from Frida RE on Android app):
+  // 1 = HD (main/4K), 2 = SD (sub/360p)
+  const streamType = quality === 'main' ? 1 : 2
 
   if (!deviceSerial || typeof deviceSerial !== 'string') {
     return NextResponse.json({ error: 'deviceSerial is required' }, { status: 400 })
@@ -60,7 +63,7 @@ export async function POST(req: Request) {
       hls: {
         outputDir: hlsDir,
         segmentDuration: 2,
-        quality: streamType === 0 ? 'main' as const : 'sub' as const,
+        quality: quality === 'main' ? 'main' as const : 'sub' as const,
       },
     })
 
