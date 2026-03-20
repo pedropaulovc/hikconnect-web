@@ -90,6 +90,7 @@ export class FfmpegHlsPipe {
       '-crf', crf,
       '-g', '25',
       '-sc_threshold', '0',
+      '-x264-params', 'sliced-threads=0:threads=4',  // prevent slice boundary artifacts
     ]
 
     const segExt = 'ts'
