@@ -1063,6 +1063,9 @@ export class P2PSession extends EventEmitter {
     pkt.writeUInt32BE(100000, 36) // Estimated link capacity (packets/s)
     pkt.writeUInt32BE(0, 40)     // Receiving rate (bytes/s) — optional
 
+    if (this.srtAckNumber <= 5 || this.srtAckNumber % 50 === 0) {
+      console.log(`[SRT-ACK] #${this.srtAckNumber - 1} ackSeq=${lastRecvSeq + 1} peerSocket=0x${(this.srtPeerSocketId ?? 0).toString(16)} dataCount=${this.srtDataCount}`)
+    }
     this.sendToDevice(pkt)
   }
 

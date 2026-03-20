@@ -109,8 +109,6 @@ npx tsx scripts/test-p2p-v2.ts          # Legacy P2P server handshake test
 npx tsx scripts/test-vtm-connect.ts     # Test VTM relay connection
 ```
 
-**Important:** The NVR limits concurrent P2P streams. Wait 30+ seconds between connection attempts. After many rapid connections (~20), the device may need hours of cooldown or a reboot.
-
 ### NAT Traversal
 
 The P2P protocol works behind NAT without a public IP:
