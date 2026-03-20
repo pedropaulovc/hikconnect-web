@@ -44,6 +44,20 @@ export default function VideoPlayer({ url, mode }: { url: string; mode?: 'live' 
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         video.play().catch(() => {})
       })
+      hls.on(Hls.Events.ERROR, (_event: string, data: any) => {
+        if (!data.fatal) return
+        if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+          hls.recoverMediaError()
+          return
+        }
+        // Fatal network error (e.g. manifest 404 before stream ready) — reload after delay
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+          setTimeout(() => {
+            hls.loadSource(url)
+            hls.startLoad()
+          }, 2000)
+        }
+      })
     })
 
     return () => {
