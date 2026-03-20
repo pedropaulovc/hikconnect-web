@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { sessions } from '../sessions'
+import { sessions, deviceLastStop } from '../sessions'
 
 export async function POST(req: Request) {
   const body = await req.json()
@@ -14,8 +14,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Session not found' }, { status: 404 })
   }
 
-  session.stop()
+  await session.stop()
   sessions.delete(sessionId)
+
+  // Record stop time for per-device cooldown enforcement
+  const deviceSerial = sessionId.split('-')[0]
+  deviceLastStop.set(deviceSerial, Date.now())
 
   return NextResponse.json({ stopped: true })
 }

@@ -140,9 +140,9 @@ export class LiveStream extends EventEmitter {
     }
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     if (this._state === 'stopped') return
-    this.cleanup()
+    await this.cleanup()
     this.transition('stopped')
   }
 
@@ -152,8 +152,8 @@ export class LiveStream extends EventEmitter {
     this.emit('stateChange', { from: prev, to: next })
   }
 
-  private cleanup(): void {
-    this.p2pSession?.stop()
+  private async cleanup(): Promise<void> {
+    await this.p2pSession?.stop()
     this.p2pSession = null
     this.hlsPipe?.stop()
     this.hlsPipe = null

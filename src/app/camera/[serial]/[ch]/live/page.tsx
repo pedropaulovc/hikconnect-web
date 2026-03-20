@@ -6,12 +6,15 @@ import VideoPlayer from '@/components/VideoPlayer'
 import type { LiveState } from '@/app/camera/stream-states'
 import styles from './page.module.css'
 
+type StreamQuality = 'sub' | 'main'
+
 export default function LiveViewPage({ params }: { params: Promise<{ serial: string; ch: string }> }) {
   const { serial, ch } = use(params)
   const [state, setState] = useState<LiveState>('idle')
   const [sessionId, setSessionId] = useState('')
   const [playlistUrl, setPlaylistUrl] = useState('')
   const [error, setError] = useState('')
+  const [quality, setQuality] = useState<StreamQuality>('sub')
 
   const start = async () => {
     const code = prompt('Enter device verification code (6 chars):')
@@ -19,12 +22,13 @@ export default function LiveViewPage({ params }: { params: Promise<{ serial: str
 
     setState('starting')
     setError('')
+    const streamType = quality === 'main' ? 0 : 1
     const res = await fetch('/api/stream/start', {
       method: 'POST',
       body: JSON.stringify({
         deviceSerial: serial,
         channel: Number(ch),
-        streamType: 1,
+        streamType,
         verificationCode: code,
       }),
       headers: { 'Content-Type': 'application/json' },
@@ -70,6 +74,17 @@ export default function LiveViewPage({ params }: { params: Promise<{ serial: str
           )}
         </div>
         <div className={styles.controls}>
+          {state !== 'streaming' && (
+            <select
+              value={quality}
+              onChange={(e) => setQuality(e.target.value as StreamQuality)}
+              disabled={state !== 'idle'}
+              className={styles.qualitySelect}
+            >
+              <option value="sub">Sub (360p)</option>
+              <option value="main">Main (4K)</option>
+            </select>
+          )}
           {state === 'streaming' ? (
             <button onClick={stop} className={styles.stopButton}>Stop</button>
           ) : (
