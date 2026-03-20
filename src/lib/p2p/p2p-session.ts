@@ -43,7 +43,7 @@ export type P2PSessionConfig = {
   userId: string
   clientId: number        // Client ID for expand header
   channelNo: number
-  streamType: number      // 0=main, 1=sub
+  streamType: number      // 1=HD (main/4K), 2=SD (sub) — from Frida RE on Android app
   streamTokens: string[]  // Stream auth tokens from /api/user/token/get
   localPublicIp?: string  // Public IP for P2P_SETUP registration
   busType?: number        // 1=live preview (default), 2=playback

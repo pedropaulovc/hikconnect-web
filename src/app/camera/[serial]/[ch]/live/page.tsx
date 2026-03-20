@@ -22,13 +22,12 @@ export default function LiveViewPage({ params }: { params: Promise<{ serial: str
 
     setState('starting')
     setError('')
-    const streamType = quality === 'main' ? 0 : 1
     const res = await fetch('/api/stream/start', {
       method: 'POST',
       body: JSON.stringify({
         deviceSerial: serial,
         channel: Number(ch),
-        streamType,
+        quality,
         verificationCode: code,
       }),
       headers: { 'Content-Type': 'application/json' },
