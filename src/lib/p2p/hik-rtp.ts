@@ -31,18 +31,22 @@ export class HikRtpExtractor extends EventEmitter {
   private nalCount = 0
   private fuFragments: Buffer[] = []
   private fuNalHeader: Buffer | null = null
+  private fuComplete = false // true only when End fragment received
 
-  /** Flush any accumulated FU fragments as a complete NAL. */
+  /** Flush accumulated FU fragments. Only emits if the FU was completed (End received). */
   flush(): void {
-    if (this.fuFragments.length > 0 && this.fuNalHeader) {
+    if (this.fuFragments.length > 0 && this.fuNalHeader && this.fuComplete) {
       const assembled = Buffer.concat([this.fuNalHeader, ...this.fuFragments])
       this.fuFragments = []
       this.fuNalHeader = null
+      this.fuComplete = false
       this.emitNal(assembled)
       return
     }
+    // Incomplete FU — discard to prevent decoder corruption
     this.fuFragments = []
     this.fuNalHeader = null
+    this.fuComplete = false
   }
 
   /**
@@ -118,7 +122,7 @@ export class HikRtpExtractor extends EventEmitter {
       const fuType = fuHeader & 0x3f
 
       if (isStart) {
-        // Start of new FU — flush any previous incomplete one
+        // Start of new FU — discard any previous incomplete one
         this.flush()
         // Reconstruct original NAL header: preserve forbidden_zero_bit and nuh_layer_id
         // from PayloadHdr, substitute NAL type from FU header
@@ -131,6 +135,7 @@ export class HikRtpExtractor extends EventEmitter {
       }
 
       if (isEnd) {
+        this.fuComplete = true
         this.flush()
       }
       return

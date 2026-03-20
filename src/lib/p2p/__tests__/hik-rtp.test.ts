@@ -154,22 +154,21 @@ describe('HikRtpExtractor', () => {
       ]))
     })
 
-    it('flushes incomplete FU when non-FU NAL arrives', () => {
+    it('discards incomplete FU when non-FU NAL arrives (prevents decoder corruption)', () => {
       const extractor = new HikRtpExtractor()
       const nals: Buffer[] = []
       extractor.on('nalUnit', (nal: Buffer) => nals.push(nal))
 
-      // Start fragment (no end)
+      // Start fragment (no end) — incomplete FU
       const start = Buffer.from([0x62, 0x01, 0x93, 0xaa, 0xbb])
       extractor.processPacket(buildPacket(start))
 
-      // PPS NAL triggers flush of incomplete FU
+      // PPS NAL triggers discard of incomplete FU
       const pps = Buffer.from([0x44, 0x01, 0xe0, 0x76])
       extractor.processPacket(buildPacket(pps))
 
-      expect(nals.length).toBe(2) // flushed FU + PPS
-      expect((nals[0][4] >> 1) & 0x3f).toBe(19) // IDR from FU
-      expect((nals[1][4] >> 1) & 0x3f).toBe(34) // PPS
+      expect(nals.length).toBe(1) // only PPS, incomplete FU discarded
+      expect((nals[0][4] >> 1) & 0x3f).toBe(34) // PPS
     })
 
     it('handles consecutive FUs (multiple slice segments)', () => {
