@@ -41,3 +41,7 @@ coverage/
 .claude/worktrees/
 native/libs/*.so
 native/ghidra/
+
+# Frida/ADB artifacts
+scripts/frida/screen.png
+scripts/frida/ui.xml
