@@ -1,10 +1,11 @@
+import nextConfig from "eslint-config-next/core-web-vitals";
 import tseslint from "typescript-eslint";
 
-export default [
+const config = [
+  ...nextConfig,
   ...tseslint.configs.recommended,
   {
     rules: {
-      "@typescript-eslint/no-explicit-any": "off",
       "@typescript-eslint/no-unused-vars": [
         "error",
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
@@ -12,6 +13,8 @@ export default [
     },
   },
   {
-    ignores: ["node_modules/**", ".next/**", "scripts/**"],
+    ignores: ["scripts/**"],
   },
 ];
+
+export default config;

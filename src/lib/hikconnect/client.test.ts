@@ -35,7 +35,7 @@ describe('HikConnectClient', () => {
 
   describe('getDevices', () => {
     it('sends sessionId header and returns device list', async () => {
-      const mockFetch = vi.fn(async () =>
+      const mockFetch = vi.fn(async (_url: string, _init?: RequestInit) =>
         new Response(JSON.stringify({
           meta: { code: 200, message: 'OK' },
           deviceInfos: [{ deviceSerial: 'ABC123', deviceName: 'NVR' }],
@@ -53,15 +53,15 @@ describe('HikConnectClient', () => {
       expect(devices).toHaveLength(1)
       expect(devices[0].deviceSerial).toBe('ABC123')
 
-       
-      const headers = new Headers((mockFetch.mock.lastCall as any)?.[1]?.headers as HeadersInit)
+      const lastCall = mockFetch.mock.lastCall!
+      const headers = new Headers(lastCall[1]?.headers)
       expect(headers.get('sessionId')).toBe('sess123')
     })
   })
 
   describe('getP2PConfig', () => {
     it('parses P2P servers, KMS key, and connection info from pagelist response', async () => {
-      const mockFetch = vi.fn(async () =>
+      const mockFetch = vi.fn(async (_url: string, _init?: RequestInit) =>
         new Response(JSON.stringify({
           meta: { code: 200, message: 'OK' },
           deviceInfos: [{ deviceSerial: 'L38239367' }],
@@ -121,13 +121,12 @@ describe('HikConnectClient', () => {
       expect(config.connection.wanIp).toBe('24.35.64.195')
 
       // Verify the filter query parameter
-       
-      const calledUrl = (mockFetch.mock.calls as any)[0][0] as string
+      const calledUrl = mockFetch.mock.calls[0][0]
       expect(calledUrl).toContain('filter=P2P,KMS,CONNECTION')
     })
 
     it('throws when device serial is not found in P2P response', async () => {
-      const mockFetch = vi.fn(async () =>
+      const mockFetch = vi.fn(async (_url: string, _init?: RequestInit) =>
         new Response(JSON.stringify({
           meta: { code: 200, message: 'OK' },
           deviceInfos: [],
