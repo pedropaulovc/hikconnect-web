@@ -23,7 +23,7 @@
     "react-dom": "^19.2.4"
   },
   "devDependencies": {
-    "@eslint/js": "^9.39.4",
+    "@eslint/js": "^10.0.1",
     "@playwright/test": "npm:@pedropaulovc/playwright-test@1.59.0-next.8",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
@@ -35,7 +35,7 @@
     "@vitest/coverage-v8": "^4.0.18",
     "cross-env": "^10.1.0",
     "eslint": "^9.32.0",
-    "eslint-config-next": "16.1.6",
+    "eslint-config-next": "16.2.2",
     "eslint-plugin-playwright": "^2.9.0",
     "eslint-plugin-react-refresh": "^0.5.2",
     "husky": "^9.1.7",
@@ -43,7 +43,7 @@
     "playwright": "npm:@pedropaulovc/playwright@1.59.0-next.8",
     "playwright-core": "npm:@pedropaulovc/playwright-core@1.59.0-next.8",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.57.1",
+    "typescript-eslint": "^8.58.0",
     "vitest": "^4.0.18"
   },
   "engines": {
