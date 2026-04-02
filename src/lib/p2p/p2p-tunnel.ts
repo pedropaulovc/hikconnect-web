@@ -69,6 +69,11 @@ export class P2PTunnel extends EventEmitter {
     }
   }
 
+  localAddress(): { address: string; port: number; family: string } {
+    if (!this.socket) throw new Error('Tunnel not open')
+    return this.socket.address()
+  }
+
   close(): void {
     this.socket?.close()
     this.socket = null

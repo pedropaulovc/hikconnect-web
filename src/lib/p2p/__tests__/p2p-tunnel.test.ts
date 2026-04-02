@@ -58,7 +58,7 @@ describe('P2PTunnel', () => {
     // We use a second UDP socket to deliver data to the tunnel
     const { createSocket } = await import('node:dgram')
     const sender = createSocket('udp4')
-    const addr = (tunnel as any).socket.address()
+    const addr = tunnel.localAddress()
     sender.send(packet, addr.port, '127.0.0.1')
 
     const received = await dataPromise
@@ -83,7 +83,7 @@ describe('P2PTunnel', () => {
 
     const { createSocket } = await import('node:dgram')
     const sender = createSocket('udp4')
-    const addr = (tunnel as any).socket.address()
+    const addr = tunnel.localAddress()
     sender.send(packet, addr.port, '127.0.0.1')
 
     const err = await errorPromise
@@ -104,7 +104,7 @@ describe('P2PTunnel', () => {
 
     const { createSocket } = await import('node:dgram')
     const sender = createSocket('udp4')
-    const addr = (tunnel as any).socket.address()
+    const addr = tunnel.localAddress()
 
     // Send a tiny packet (below HEADER_SIZE + HMAC_SIZE threshold)
     sender.send(Buffer.from('hi'), addr.port, '127.0.0.1')
@@ -130,7 +130,7 @@ describe('P2PTunnel', () => {
 
     const { createSocket } = await import('node:dgram')
     const sender = createSocket('udp4')
-    const addr = (tunnel as any).socket.address()
+    const addr = tunnel.localAddress()
 
     // Send a packet that's long enough but starts with wrong magic
     const badPacket = Buffer.alloc(50, 0x00)
