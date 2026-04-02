@@ -1,41 +1,22 @@
 {
   "compilerOptions": {
-    "target": "ES2022",
-    "useDefineForClassFields": true,
+    "target": "ES2024",
     "lib": [
-      "ES2022",
-      "DOM",
-      "DOM.Iterable"
+      "dom",
+      "dom.iterable",
+      "ES2024"
     ],
-    "module": "ESNext",
+    "allowJs": false,
     "skipLibCheck": true,
-    /* Bundler mode */
-    "moduleResolution": "bundler",
-    "allowImportingTsExtensions": true,
-    "isolatedModules": true,
-    "moduleDetection": "force",
-    "noEmit": true,
-    "jsx": "react-jsx",
-    /* Next.js */
-    "incremental": true,
-    "esModuleInterop": true,
-    "resolveJsonModule": true,
-    /* Linting */
     "strict": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "noImplicitAny": true,
-    "noFallthroughCasesInSwitch": true,
-    "exactOptionalPropertyTypes": true,
-    "noImplicitOverride": true,
-    "noImplicitReturns": true,
-    "noUncheckedIndexedAccess": true,
-    "noUncheckedSideEffectImports": true,
-    "useUnknownInCatchVariables": true,
-    "forceConsistentCasingInFileNames": true,
-    "erasableSyntaxOnly": true,
-    "noPropertyAccessFromIndexSignature": false,
-    "baseUrl": ".",
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "incremental": true,
     "paths": {
       "@/*": [
         "./src/*"
@@ -45,15 +26,12 @@
       {
         "name": "next"
       }
-    ],
-    "allowJs": true
+    ]
   },
   "include": [
-    "src",
-    "e2e",
-    "*.ts",
-    "*.tsx",
     "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts"
   ],

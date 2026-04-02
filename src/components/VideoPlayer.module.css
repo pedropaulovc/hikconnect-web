@@ -1,0 +1,10 @@
+.container {
+  background: #000;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.video {
+  width: 100%;
+  display: block;
+}

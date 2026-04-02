@@ -1,0 +1,5 @@
+export { HikConnectClient } from './client'
+export type { ClientOptions } from './client'
+export { SessionStore, sessionStore } from './session'
+export { getAuthenticatedClient } from './getClient'
+export type * from './types'

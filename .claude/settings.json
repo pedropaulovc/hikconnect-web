@@ -5,6 +5,7 @@
   "enabledPlugins": {
     "personal@personal-marketplace": true,
     "playwright-cli@personal-marketplace": true,
-    "superpowers@personal-marketplace": true
+    "superpowers@personal-marketplace": true,
+    "ralph-loop@claude-plugins-official": true
   }
 }
