@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { P2PTunnel } from '../p2p-tunnel'
 import { encryptPacket } from '../crypto'
 

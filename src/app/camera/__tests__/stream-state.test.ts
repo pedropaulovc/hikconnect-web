@@ -2,8 +2,6 @@ import { describe, it, expect } from 'vitest'
 import {
   LIVE_STATES,
   PLAYBACK_STATES,
-  type LiveState,
-  type PlaybackState,
 } from '../stream-states'
 
 describe('Stream state machines', () => {

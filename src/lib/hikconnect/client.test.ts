@@ -53,7 +53,7 @@ describe('HikConnectClient', () => {
       expect(devices).toHaveLength(1)
       expect(devices[0].deviceSerial).toBe('ABC123')
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       const headers = new Headers((mockFetch.mock.lastCall as any)?.[1]?.headers as HeadersInit)
       expect(headers.get('sessionId')).toBe('sess123')
     })
@@ -121,7 +121,7 @@ describe('HikConnectClient', () => {
       expect(config.connection.wanIp).toBe('24.35.64.195')
 
       // Verify the filter query parameter
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       const calledUrl = (mockFetch.mock.calls as any)[0][0] as string
       expect(calledUrl).toContain('filter=P2P,KMS,CONNECTION')
     })

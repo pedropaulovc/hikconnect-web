@@ -149,7 +149,7 @@ export function buildEcdhReqPacket(opts: {
   body?: Buffer            // optional body payload
   seqNum?: number          // sequence number (default: 1)
 }): Buffer {
-  const { sessionKey, masterKey, clientPublicKey, channelId, body, seqNum = 1 } = opts
+  const { sessionKey, clientPublicKey, channelId, body, seqNum = 1 } = opts
   const bodyLen = body?.length ?? 0
 
   // Encrypt 32 zero bytes with session key using AES-256-ECB

@@ -2,7 +2,6 @@ import { Socket } from 'node:net'
 import { EventEmitter } from 'node:events'
 import {
   type V3Message,
-  type V3Attribute,
   encodeV3Message,
   decodeV3Message,
   defaultMask,

@@ -27,18 +27,6 @@ export type HikNatType =
   | 'UDP_BLOCKED'
   | 'SYMMETRIC_FIREWALL'
 
-const NAT_TYPE_MAP: Record<number, HikNatType> = {
-  0: 'UNKNOWN',
-  1: 'FULL_CONE',
-  2: 'RESTRICTED_CONE',
-  3: 'PORT_RESTRICTED',
-  4: 'SYMMETRIC',
-  5: 'NO_NAT',
-  6: 'FIREWALL',
-  7: 'UDP_BLOCKED',
-  8: 'SYMMETRIC_FIREWALL',
-}
-
 // ─── SafeProtocol frame building / parsing ────────────────────────────────────
 
 export function buildSafeProtocolRequest(

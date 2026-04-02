@@ -50,7 +50,7 @@ describe.skipIf(skip)('HikConnectClient integration', () => {
         console.log('Relay public key version:', relay.publicKey.version)
         console.log('Relay public key (first 40 chars):', relay.publicKey.key?.substring(0, 40))
       }
-    } catch (e) {
+    } catch {
       console.log('Relay server not available (expected for some device types)')
     }
 
