@@ -24,7 +24,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
-    "@playwright/test": "npm:@pedropaulovc/playwright-test@1.59.0-next.8",
+    "@playwright/test": "^1.60.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
@@ -40,8 +40,8 @@
     "eslint-plugin-react-refresh": "^0.5.2",
     "husky": "^9.1.7",
     "jsdom": "^28.1.0",
-    "playwright": "npm:@pedropaulovc/playwright@1.59.0-next.8",
-    "playwright-core": "npm:@pedropaulovc/playwright-core@1.59.0-next.8",
+    "playwright": "^1.60.0",
+    "playwright-core": "^1.60.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.57.1",
     "vitest": "^4.0.18"
@@ -51,10 +51,8 @@
     "npm": ">=11"
   },
   "overrides": {
-    "@playwright/test": "npm:@pedropaulovc/playwright-test@1.59.0-next.8",
-    "playwright": "npm:@pedropaulovc/playwright@1.59.0-next.8",
-    "playwright-core": "npm:@pedropaulovc/playwright-core@1.59.0-next.8",
-    "@pedropaulovc/playwright": "npm:@pedropaulovc/playwright@1.59.0-next.8",
-    "@pedropaulovc/playwright-core": "npm:@pedropaulovc/playwright-core@1.59.0-next.8"
+    "@playwright/test": "^1.60.0",
+    "playwright": "^1.60.0",
+    "playwright-core": "^1.60.0"
   }
 }
