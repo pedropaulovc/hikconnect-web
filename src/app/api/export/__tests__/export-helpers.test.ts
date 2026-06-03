@@ -15,7 +15,6 @@ import {
 import {
   exportJobs,
   EXPORT_STATES,
-  EXPORT_IDLE_FINALIZE_MS,
   EXPORT_TTL_MS,
   type ExportState,
 } from '../jobs'
@@ -119,8 +118,7 @@ describe('export job registry (jobs.ts)', () => {
     expect(g.__hikExportJobs).toBe(exportJobs)
   })
 
-  it('defines the inactivity-finalize and TTL backstop windows', () => {
-    expect(EXPORT_IDLE_FINALIZE_MS).toBe(8_000)
+  it('defines the TTL backstop window', () => {
     expect(EXPORT_TTL_MS).toBe(60 * 60 * 1000)
   })
 

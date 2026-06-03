@@ -29,8 +29,5 @@ const g = globalThis as unknown as { __hikExportJobs?: Map<string, ExportJob> }
 /** Keyed by exportId (e.g. "ex-<serial>-<ch>-<ts>"). */
 export const exportJobs = (g.__hikExportJobs ??= new Map<string, ExportJob>())
 
-/** Inactivity before we consider a bounded playback finished (ms). */
-export const EXPORT_IDLE_FINALIZE_MS = 8_000
-
 /** Delete finished export files after this long as a backstop (ms). */
 export const EXPORT_TTL_MS = 60 * 60 * 1000
