@@ -111,6 +111,52 @@ carry video-channel sequence numbers. One-line root-cause fix; no architectural 
 
 ---
 
+## ✅ RESOLVED (3) — intermittent video corruption: SRT delivered in arrival order, no reorder buffer
+
+**Surfaced by the first end-to-end *web UI* demo** (prior runs were all script-based). Live video
+intermittently showed a frame decode only its top-left CTUs then **gray out**, recovering at the
+next keyframe (~1 frame in 6 at 720p). ACK isolation (RESOLVED 2) fixed flow-control *stalls*; it
+never addressed packet *ordering*.
+
+### Disproof of "packet loss / missing NAK" (my first hypothesis)
+The live server log showed SRT sequence advancing **exactly 1:1** with received-packet count over
+31 000+ packets — no loss. Per-packet instrumentation (`scripts/diag-srt-reorder.ts`, 20 s run)
+confirmed: **forward-gap events == backward arrivals (46 == 46)**, max backward jump 2. Every
+momentary gap is filled by a late arrival → **pure reordering, zero loss**. ~**1.4%** of video
+packets arrive out of order. So NAK/retransmit is unnecessary; in-order *delivery* is the fix.
+
+### The bug
+1. UDP reorders ~1.4 % of packets on the P2P path.
+2. `handleSrtDataPacket` emitted `data` in **arrival order** — no SRT receive buffer.
+3. **Hik-RTP has no usable sequence**: the RTP seq field (payload bytes 2–3) is always `0x0000`
+   (`first16=8060 0000 0000 0001 …`), so `HikRtpExtractor` FU reassembly cannot reorder and
+   relies entirely on SRT in-order delivery.
+4. One swapped packet inside a fragmented NAL (HEVC FU) → bytes transposed → corrupt slice → the
+   decoder emits leading CTUs then gray; dependent P-frames stay gray until the next IDR.
+
+### Fix (`src/lib/p2p/p2p-session.ts`, `handleSrtDataPacket`)
+Added an SRT receive **reorder buffer**: `deliverInOrder` holds packets that arrive ahead of the
+next-expected sequence in a `Map<seq,payload>` and releases them in order once the gap fills
+(`drainReorderBuf`). Genuine loss never stalls — a 100 ms timer **or** a packet > 64 ahead calls
+`advancePastGap`, skipping the missing seq. ACK tracking unchanged (still acks highest-received;
+flow control is orthogonal to delivery order).
+
+### Verified
+- Tests (red before, green after): `p2p-session-teardown.integration.test.ts` §
+  *"SRT receive reordering"* — re-sequences `0,2,1,3 → 0,1,2,3`, and flushes past a genuinely
+  lost packet (`0,_,2,3 → 0,2,3`) instead of stalling. Full suite **232 passing**.
+- End-to-end (web UI, headed browser): **16/16** frames clean over ~60 s (vs ~1-in-6 gray
+  before), OSD clock advancing 10:44:57 → 10:45:59. Tooling: `scripts/diag-srt-reorder.ts`.
+
+### Aside — resolution, and two web-UI store bugs found the same session
+- "Main (4K)" on the test NVR Ch 1 decodes at **1280×720** — that channel's main stream is 720p,
+  not 4K. Earlier "4K verified" notes refer to a different channel/camera.
+- The UI had never streamed before; two in-memory singletons were **duplicated across Next.js
+  route bundles** (login wrote one `sessionStore`, `/api/devices` read an empty other → 401; same
+  latent split between `/stream/start` and `/stream/stop`). Both pinned to `globalThis`.
+
+---
+
 ## Trigger
 Asked to confirm the previously-working footage pipeline (ref frame
 `docs/re/reference-frames/lobby-pcap-long-first-2026-03-19.png`) still works.

@@ -468,3 +468,74 @@ describe('P2PSession SRT ACK sequence isolation — integration', () => {
     expect(emitted.some(b => b.length >= 2 && b.readUInt16BE(0) === 0x807f)).toBe(false)
   })
 })
+
+describe('P2PSession SRT receive reordering — integration', () => {
+  let device: FakeDevice
+  let session: P2PSession | null = null
+
+  beforeEach(async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    device = new FakeDevice()
+    await device.start()
+  })
+
+  afterEach(async () => {
+    try { await session?.stop() } catch { /* safe cleanup */ }
+    session = null
+    device.close()
+    vi.restoreAllMocks()
+  })
+
+  const vpkt = (marker: number): Buffer => {
+    const p = Buffer.alloc(40)
+    p.writeUInt16BE(0x8060, 0) // video data type
+    p[4] = marker              // identifier so the test can check delivery order
+    return p
+  }
+  const videoMarkers = (session: P2PSession, out: number[]) =>
+    session.on('data', (b: Buffer) => { if (b.length >= 5 && b.readUInt16BE(0) === 0x8060) out.push(b[4]) })
+
+  // Measured on the live P2P path: ~1.4% of video packets arrive out of order
+  // (pure reordering, no loss — forward gaps are always filled by a late arrival).
+  // Hik-RTP carries no usable per-packet sequence (the RTP seq field is always 0),
+  // so FU reassembly relies entirely on SRT delivering in order. Without a reorder
+  // buffer one swapped packet inside a fragmented NAL corrupts that frame — the
+  // "decodes the top-left CTUs then goes gray" artifact. The receiver must
+  // re-sequence by SRT sequence number before emitting 'data'.
+  it('delivers out-of-order SRT data packets to consumers in sequence order', { timeout: 30_000 }, async () => {
+    session = new P2PSession(makeConfig(device.port))
+    const markers: number[] = []
+    videoMarkers(session, markers)
+    await session.start()
+    expect(session.sessionState).toBe('streaming')
+
+    const BASE = 500000
+    // Wire arrival order: 0, 2, 1, 3 — packets 1 and 2 swapped in flight.
+    device.sendSrtData(BASE + 0, vpkt(0)); await delay(15)
+    device.sendSrtData(BASE + 2, vpkt(2)); await delay(15)
+    device.sendSrtData(BASE + 1, vpkt(1)); await delay(15)
+    device.sendSrtData(BASE + 3, vpkt(3)); await delay(80)
+
+    // Re-sequenced to 0,1,2,3 — NOT arrival order 0,2,1,3
+    expect(markers).toEqual([0, 1, 2, 3])
+  })
+
+  // A reorder buffer must never block the stream waiting for a packet that is
+  // genuinely lost (forward gap never filled). After a short hold it gives up on
+  // the missing sequence and delivers the rest in order.
+  it('flushes past a genuinely lost packet instead of stalling forever', { timeout: 30_000 }, async () => {
+    session = new P2PSession(makeConfig(device.port))
+    const markers: number[] = []
+    videoMarkers(session, markers)
+    await session.start()
+
+    const BASE = 600000
+    // BASE+1 never arrives. 2 and 3 must still be delivered after the flush hold.
+    device.sendSrtData(BASE + 0, vpkt(0))
+    device.sendSrtData(BASE + 2, vpkt(2))
+    device.sendSrtData(BASE + 3, vpkt(3))
+    await delay(250) // > reorder flush timeout
+
+    expect(markers).toEqual([0, 2, 3])
+  })
+})
