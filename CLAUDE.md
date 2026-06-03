@@ -112,6 +112,7 @@ npx tsx scripts/test-p2p-dynamic.ts     # Full P2P test: login → P2P_SETUP →
 npx tsx scripts/test-p2p-to-ffmpeg.ts   # Live stream → H.265 → FFmpeg → HLS
 npx tsx scripts/test-playback-ps.ts [t] # Playback (t=YYYY-MM-DDTHH:MM:SS) → MPEG-PS → FFmpeg → MP4
 npx tsx scripts/probe-recordings.ts [d] # List recordings (d=YYYY-MM-DD)
+npx tsx scripts/probe-alarms.ts            # List alarm events (verify /v3/alarms/advanced live)
 npx tsx scripts/diag-stream-reliability.ts [n] [cooldownSec]  # Stream reliability + clientId diagnostic
 npx tsx scripts/diag-srt-reorder.ts [holdSec]  # Per-packet SRT reorder/loss detector
 npx tsx scripts/diag-source-resolution.ts <streamType> [holdSec]  # ffprobe the raw H.265 SOURCE resolution (1=main 4K, 2=sub 640x480)
