@@ -25,6 +25,11 @@
   --ion-color-step-150: #21262d;
 }
 
+/* Card titles default to a muted step color that reads too dark on our theme */
+ion-card-title {
+  color: var(--ion-text-color);
+}
+
 /* Letterbox video players nicely on the dark background */
 video {
   background: #000;
