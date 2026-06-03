@@ -1,0 +1,14 @@
+node_modules
+dist
+dist-ssr
+*.local
+.env
+.env.*
+
+# Capacitor native platforms (added later)
+/android
+/ios
+
+# Editor / OS
+.DS_Store
+*.log
