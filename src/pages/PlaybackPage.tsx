@@ -43,16 +43,17 @@ export function PlaybackPage() {
         </IonToolbar>
       </IonHeader>
       <IonContent>
-        <VideoPlayer src={recording.videoUrl} poster={recording.thumbnailUrl} />
+        <div className="page-content">
+          <VideoPlayer src={recording.videoUrl} poster={recording.thumbnailUrl} />
 
-        <div className="ion-padding-horizontal ion-padding-top">
-          <IonText>
-            <h2 style={{ margin: '0 0 4px' }}>{camera?.name ?? recording.cameraId}</h2>
-          </IonText>
-          <IonNote>{date}</IonNote>
-        </div>
+          <div className="ion-padding-horizontal ion-padding-top">
+            <IonText>
+              <h2 style={{ margin: '0 0 4px' }}>{camera?.name ?? recording.cameraId}</h2>
+            </IonText>
+            <IonNote>{date}</IonNote>
+          </div>
 
-        <IonList>
+          <IonList>
           <IonItem>
             <IonLabel>Start</IonLabel>
             <IonNote slot="end">{formatClock(recording.start)}</IonNote>
@@ -65,7 +66,8 @@ export function PlaybackPage() {
             <IonLabel>Duration</IonLabel>
             <IonNote slot="end">{recording.durationSec}s</IonNote>
           </IonItem>
-        </IonList>
+          </IonList>
+        </div>
       </IonContent>
     </IonPage>
   );

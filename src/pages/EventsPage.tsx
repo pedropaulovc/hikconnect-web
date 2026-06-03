@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import {
+  IonButtons,
   IonContent,
   IonHeader,
   IonItemDivider,
   IonLabel,
   IonList,
+  IonMenuButton,
   IonPage,
   IonSelect,
   IonSelectOption,
@@ -25,11 +27,14 @@ export function EventsPage() {
     <IonPage>
       <IonHeader>
         <IonToolbar>
+          <IonButtons slot="start">
+            <IonMenuButton />
+          </IonButtons>
           <IonTitle>Events</IonTitle>
         </IonToolbar>
       </IonHeader>
       <IonContent>
-        <IonList>
+        <IonList className="page-content">
           <IonItemDivider>
             <IonLabel>Camera</IonLabel>
             <IonSelect

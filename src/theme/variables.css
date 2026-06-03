@@ -30,6 +30,12 @@ ion-card-title {
   color: var(--ion-text-color);
 }
 
+/* Constrain long lists/content to a readable column on wide desktop screens */
+.page-content {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
 /* Letterbox video players nicely on the dark background */
 video {
   background: #000;

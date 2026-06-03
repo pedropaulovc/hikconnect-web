@@ -1,6 +1,9 @@
 node_modules
 dist
 dist-ssr
+dist-tsnode
+*.tsbuildinfo
+.playwright-cli
 *.local
 .env
 .env.*

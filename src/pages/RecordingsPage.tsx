@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import {
+  IonButtons,
   IonContent,
   IonHeader,
   IonItemDivider,
   IonItemGroup,
   IonLabel,
   IonList,
+  IonMenuButton,
   IonPage,
   IonSelect,
   IonSelectOption,
@@ -42,11 +44,14 @@ export function RecordingsPage() {
     <IonPage>
       <IonHeader>
         <IonToolbar>
+          <IonButtons slot="start">
+            <IonMenuButton />
+          </IonButtons>
           <IonTitle>Recordings</IonTitle>
         </IonToolbar>
       </IonHeader>
       <IonContent>
-        <IonList>
+        <IonList className="page-content">{/* max-width wrapper for desktop */}
           <IonItemDivider>
             <IonLabel>Camera</IonLabel>
             <IonSelect

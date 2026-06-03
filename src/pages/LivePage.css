@@ -1,0 +1,17 @@
+.camera-wall {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: 16px;
+  padding: 16px;
+  max-width: 1600px;
+  margin: 0 auto;
+}
+
+/* On narrow screens (phones) stack to a single column. */
+@media (max-width: 576px) {
+  .camera-wall {
+    grid-template-columns: 1fr;
+    gap: 12px;
+    padding: 12px;
+  }
+}

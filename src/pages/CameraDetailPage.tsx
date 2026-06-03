@@ -19,6 +19,7 @@ import { LivePlayer } from '../components/LivePlayer';
 import { EventListItem } from '../components/EventListItem';
 import { RecordingListItem } from '../components/RecordingListItem';
 import { cameraById, eventsForCamera, recordingsForCamera } from '../data';
+import './CameraDetailPage.css';
 
 export function CameraDetailPage() {
   const { cameraId } = useParams<{ cameraId: string }>();
@@ -43,48 +44,59 @@ export function CameraDetailPage() {
         </IonToolbar>
       </IonHeader>
       <IonContent>
-        <LivePlayer src={camera.liveStreamUrl} poster={camera.posterUrl} />
+        <div className="focus-layout">
+          <div className="focus-layout__main">
+            <div className="focus-layout__player">
+              {camera.status === 'online' ? (
+                <LivePlayer src={camera.liveStreamUrl} poster={camera.posterUrl} fit="contain" />
+              ) : (
+                <div className="focus-layout__offline">Camera offline</div>
+              )}
+            </div>
+            <div className="focus-layout__meta">
+              <IonText>
+                <h2>{camera.name}</h2>
+              </IonText>
+              <IonNote>{camera.location}</IonNote>{' '}
+              <IonBadge color={statusColor}>{camera.status}</IonBadge>
+            </div>
+          </div>
 
-        <div className="ion-padding-horizontal ion-padding-top">
-          <IonText>
-            <h2 style={{ margin: '0 0 4px' }}>{camera.name}</h2>
-          </IonText>
-          <IonNote>{camera.location}</IonNote>{' '}
-          <IonBadge color={statusColor}>{camera.status}</IonBadge>
+          <aside className="focus-layout__side">
+            <IonList>
+              <IonItemDivider>
+                <IonLabel>Activity</IonLabel>
+              </IonItemDivider>
+              {activity.length === 0 && (
+                <div className="ion-padding">
+                  <IonNote>No recent detections.</IonNote>
+                </div>
+              )}
+              {activity.map((event) => (
+                <EventListItem key={event.id} event={event} />
+              ))}
+
+              <IonItemDivider>
+                <IonLabel>Recordings</IonLabel>
+                <IonRouterLink slot="end" routerLink="/recordings" className="ion-padding-end">
+                  View all
+                </IonRouterLink>
+              </IonItemDivider>
+              {recordings.length === 0 && (
+                <div className="ion-padding">
+                  <IonNote>No recordings.</IonNote>
+                </div>
+              )}
+              {recordings.map((recording) => (
+                <RecordingListItem
+                  key={recording.id}
+                  recording={recording}
+                  cameraName={camera.name}
+                />
+              ))}
+            </IonList>
+          </aside>
         </div>
-
-        <IonList>
-          <IonItemDivider>
-            <IonLabel>Activity</IonLabel>
-          </IonItemDivider>
-          {activity.length === 0 && (
-            <div className="ion-padding">
-              <IonNote>No recent detections.</IonNote>
-            </div>
-          )}
-          {activity.map((event) => (
-            <EventListItem key={event.id} event={event} />
-          ))}
-
-          <IonItemDivider>
-            <IonLabel>Recordings</IonLabel>
-            <IonRouterLink slot="end" routerLink="/recordings" className="ion-padding-end">
-              View all
-            </IonRouterLink>
-          </IonItemDivider>
-          {recordings.length === 0 && (
-            <div className="ion-padding">
-              <IonNote>No recordings.</IonNote>
-            </div>
-          )}
-          {recordings.map((recording) => (
-            <RecordingListItem
-              key={recording.id}
-              recording={recording}
-              cameraName={camera.name}
-            />
-          ))}
-        </IonList>
       </IonContent>
     </IonPage>
   );

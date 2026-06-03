@@ -1,34 +1,37 @@
 import {
-  IonCol,
+  IonButtons,
   IonContent,
-  IonGrid,
   IonHeader,
+  IonMenuButton,
   IonPage,
-  IonRow,
   IonTitle,
   IonToolbar,
 } from '@ionic/react';
-import { CameraCard } from '../components/CameraCard';
-import { cameras } from '../data';
+import { CameraTile } from '../components/CameraTile';
+import { cameras, eventsForCamera } from '../data';
+import './LivePage.css';
 
 export function LivePage() {
   return (
     <IonPage>
       <IonHeader>
         <IonToolbar>
-          <IonTitle>Cameras</IonTitle>
+          <IonButtons slot="start">
+            <IonMenuButton />
+          </IonButtons>
+          <IonTitle>Camera Wall</IonTitle>
         </IonToolbar>
       </IonHeader>
       <IonContent>
-        <IonGrid>
-          <IonRow>
-            {cameras.map((camera) => (
-              <IonCol size="12" sizeMd="6" key={camera.id}>
-                <CameraCard camera={camera} />
-              </IonCol>
-            ))}
-          </IonRow>
-        </IonGrid>
+        <div className="camera-wall">
+          {cameras.map((camera) => (
+            <CameraTile
+              key={camera.id}
+              camera={camera}
+              lastEvent={eventsForCamera(camera.id)[0]}
+            />
+          ))}
+        </div>
       </IonContent>
     </IonPage>
   );
