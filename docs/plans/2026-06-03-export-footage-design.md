@@ -30,19 +30,25 @@ The export reuses the entire P2P + Hik-RTP front-end. Only the FFmpeg sink diffe
 
 ```
 P2PSession (busType=2, startTime/stopTime)
-   → HikRtpExtractor → HEVC NAL stream (Annex-B, -f hevc)
+   → wireDataPath: busType=2 → extractPlaybackPayload (MPEG-PS, -f mpeg)
+                   busType=1 → HikRtpExtractor (HEVC NALs, -f hevc)
       → [ VideoSink ]
           ├─ FfmpegHlsPipe   (existing — live + playback view)
-          └─ FfmpegMp4Pipe   (new — export)
+          └─ FfmpegMp4Pipe   (new — export, always playback → MPEG-PS)
 ```
 
-Key fact confirmed in code: for playback the `HikRtpExtractor` already emits raw HEVC
-NAL units (`nalUnit` events) and the HLS pipe consumes them with `-f hevc`. So the
-export sink receives the same Annex-B HEVC NAL stream and can stream-copy it directly:
+Key fact confirmed in code (`live-stream.ts` `wireDataPath()`): for playback (busType=2)
+the data path calls `extractPlaybackPayload()` to strip the 12-byte Hik-RTP header and
+writes **MPEG-PS container bytes** to the sink; FFmpeg demuxes with `-f mpeg`. (Live
+preview, busType=1, instead runs `HikRtpExtractor` → raw HEVC NALs with `-f hevc`.)
+Export is always playback, so the MP4 sink receives MPEG-PS and stream-copies the HEVC
+video out of it:
 
 ```
-ffmpeg -f hevc -framerate 25 -i pipe:0 -c:v copy -an -movflags +faststart out.mp4
+ffmpeg -f mpeg -i pipe:0 -c:v copy -an -movflags +faststart out.mp4
 ```
+
+(Same command proven in `scripts/test-playback-ps.ts`.)
 
 There is **no explicit end-of-stream event** from `P2PSession`. The NVR streams a
 bounded range at ~realtime, then goes quiet. Completion is detected by a data-inactivity

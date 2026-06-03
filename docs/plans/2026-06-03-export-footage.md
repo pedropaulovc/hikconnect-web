@@ -14,7 +14,7 @@
 
 Full design: `docs/plans/2026-06-03-export-footage-design.md`. Key facts the implementer must trust:
 
-- For **playback** the `HikRtpExtractor` already emits **raw Annex-B HEVC NAL units** (`nalUnit` events); the HLS pipe consumes them with `-f hevc`. The export sink receives the **same NAL stream** and stream-copies it: `ffmpeg -f hevc -framerate 25 -i pipe:0 -c:v copy -an -movflags +faststart out.mp4`.
+- For **playback** (busType=2) `LiveStream.wireDataPath()` calls `extractPlaybackPayload(payload)` (strips the 12-byte Hik-RTP header) and writes **MPEG-PS container bytes** to the sink; FFmpeg demuxes with `-f mpeg`. (Live preview, busType=1, instead runs `HikRtpExtractor` → raw HEVC NALs with `-f hevc`.) Export is always playback, so the MP4 sink receives **MPEG-PS** and stream-copies the HEVC video out of it: `ffmpeg -f mpeg -i pipe:0 -c:v copy -an -movflags +faststart out.mp4` — the same command proven in `scripts/test-playback-ps.ts`.
 - There is **no end-of-stream event** from `P2PSession`. The NVR streams the bounded range at ~realtime then goes quiet. Completion = **data-inactivity watchdog** (no NAL for ~8 s after first byte) OR requested duration reached.
 - Times are device wall-clock ISO `YYYY-MM-DDTHH:MM:SS` (no `Z`), as used by `/api/stream/playback`.
 
@@ -88,8 +88,10 @@ export type VideoSink = {
 - In `ffmpeg-pipe.ts`: `export class FfmpegHlsPipe implements VideoSink` (import the type). No behavior change.
 - In `live-stream.ts`:
   - Import `VideoSink`.
-  - Add constructor param: `constructor(config: LiveStreamConfig, private sinkFactory: (c: LiveStreamConfig) => VideoSink = (c) => new FfmpegHlsPipe(c.hls))`.
-  - Replace `this.hlsPipe = new FfmpegHlsPipe(this.config.hls)` with `this.sink = this.sinkFactory(this.config)`; rename `hlsPipe` field → `sink: VideoSink | null`. Update `write`/`stop` references.
+  - Add constructor param: `constructor(config: LiveStreamConfig, private sinkFactory: (c: LiveStreamConfig) => VideoSink = defaultHlsSinkFactory)`.
+  - **Preserve the existing `inputFormat` logic.** Current `start()` computes `const inputFormat = this.config.busType === 2 ? 'mpeg' : 'hevc'` and builds `new FfmpegHlsPipe({ ...this.config.hls, inputFormat })`. Move that into the default factory:
+    `const defaultHlsSinkFactory = (c: LiveStreamConfig): VideoSink => new FfmpegHlsPipe({ ...c.hls, inputFormat: c.busType === 2 ? 'mpeg' : 'hevc' })`.
+  - Replace the inline pipe construction in `start()` with `this.sink = this.sinkFactory(this.config)`; rename `hlsPipe` field → `sink: VideoSink | null`. Update `wireDataPath()` (writes to `this.sink`), `playlistPath` getter, and `cleanup()` references.
   - `playlistPath` getter: keep, but guard — only HLS sinks have it. Add `get sink()` accessor (returns the sink) so the export route can read MP4 progress. Simplest: expose `getSink(): VideoSink | null`.
 - Callers (`start/route.ts`, `playback/route.ts`): no change needed if the factory defaults to HLS. Verify they still compile (they read `stream.playlistPath`).
 
@@ -121,18 +123,19 @@ import { buildMp4FfmpegArgs } from '../ffmpeg-mp4-pipe'
 
 describe('buildMp4FfmpegArgs', () => {
   const OUT = '/tmp/export/cam1.mp4'
-  it('stream-copies HEVC into MP4 with faststart, no transcode', () => {
+  it('stream-copies the HEVC video out of MPEG-PS into MP4 with faststart, no transcode', () => {
     const args = buildMp4FfmpegArgs(OUT)
     expect(args).toContain('copy')                 // -c:v copy
     expect(args).not.toContain('libx264')
     expect(args).not.toContain('h264_nvenc')
-    expect(args[args.indexOf('-f') + 1]).toBe('hevc') // input format
+    expect(args[args.indexOf('-f') + 1]).toBe('mpeg') // input demuxer = MPEG-PS (playback container)
     expect(args).toContain('+faststart')
     expect(args[args.length - 1]).toBe(OUT)
   })
-  it('reads raw HEVC from stdin', () => {
+  it('reads the MPEG-PS stream from stdin and drops audio', () => {
     const args = buildMp4FfmpegArgs(OUT)
     expect(args).toContain('pipe:0')
+    expect(args).toContain('-an')
   })
 })
 ```
@@ -146,15 +149,16 @@ import { spawn, ChildProcess } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 
-/** FFmpeg argv to remux the raw HEVC NAL stream (stdin) into an MP4 file.
- *  Stream-copy: no re-encode, keeps the native HEVC (main 4K / sub 640×480). */
+/** FFmpeg argv to remux the playback MPEG-PS stream (stdin) into an MP4 file.
+ *  Stream-copy: no re-encode, keeps the native HEVC (main 4K / sub 640×480).
+ *  MPEG-PS carries its own PTS, so no synthetic -framerate (unlike the live
+ *  raw-hevc path). Matches scripts/test-playback-ps.ts. */
 export function buildMp4FfmpegArgs(outputPath: string): string[] {
   return [
     '-probesize', '500000',
     '-analyzeduration', '2000000',
     '-err_detect', 'ignore_err',
-    '-f', 'hevc',
-    '-framerate', '25',
+    '-f', 'mpeg',
     '-i', 'pipe:0',
     '-c:v', 'copy',
     '-an',
