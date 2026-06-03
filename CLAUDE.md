@@ -8,8 +8,8 @@ Web client for Hikvision NVRs/cameras that streams video via the Hik-Connect clo
 
 **Phase 2 (protocol reverse engineering):** Complete. Full P2P streaming pipeline reverse-engineered from iVMS-4200 (Ghidra) and verified on VPS. P2P_SETUP → hole-punch → SRT → H.265 video data flowing.
 
-**Phase 3 (streaming + UI):** Complete. Live preview and playback both produce verified HEVC video, **credentials-only (no hardcoded keys/codes) and reliably** (20/20 back-to-back). Resolution is whatever the channel's encoder is configured for — the test NVR's Ch 1 main stream decodes at **1280×720**, not 4K. Verified end-to-end through the web UI (16/16 clean frames over ~60s) after the SRT reorder-buffer fix.
-- **Live preview** (busType=1): Hik-RTP framing → H.265 NAL extraction → FFmpeg HLS. Verified sustained HEVC.
+**Phase 3 (streaming + UI):** Complete. Live preview and playback both produce verified HEVC video, **credentials-only (no hardcoded keys/codes) and reliably** (20/20 back-to-back). The test NVR's Ch 1 source streams, measured from the raw H.265 before FFmpeg (`scripts/diag-source-resolution.ts`), are **main = 3840×2160 (true 4K)** and **sub = 640×480**, both HEVC Main. On a GPU host the pipeline NVDEC+NVENC transcodes to H.264 at **full source resolution** (no downscale; verified H.264 3840×2160 HLS segments end-to-end); the CPU `libx264` fallback downscales (main→720p, sub→360p) since realtime 4K H.264 on CPU is infeasible. Verified end-to-end through the web UI (16/16 clean frames over ~60s) after the SRT reorder-buffer fix.
+- **Live preview** (busType=1): Hik-RTP framing → H.265 NAL extraction → FFmpeg HLS. Verified sustained 4K HEVC.
 - **Playback** (busType=2): MPEG-PS container over Hik-RTP → FFmpeg demux. Verified 8.4MB recent-recording playback (NVR retention rotates old recordings off — query a recent time).
 
 **Key discovery:** Playback streams use MPEG Program Stream (PS) container, NOT raw H.265 NALs like live preview. The NVR stores recordings as PS files and streams them as-is. Strip 12-byte Hik-RTP headers from 0x8050 packets and pipe to FFmpeg as `-f mpeg`.
@@ -85,8 +85,8 @@ Client                    P2P Server (52.x:6000)      Device (NVR)
 
 - **Runtime:** Node.js 25, TypeScript strict
 - **Framework:** Next.js 16 (App Router)
-- **Testing:** Vitest (98 tests passing)
-- **Video:** FFmpeg (transmux to HLS), HLS.js (browser playback)
+- **Testing:** Vitest (239 tests passing, 1 skipped)
+- **Video:** FFmpeg H.265→H.264 transcode to HLS (NVDEC+NVENC full-res on GPU, libx264 downscale fallback), HLS.js (browser playback)
 - **Crypto:** Node.js native crypto (AES, ChaCha20, ECDH, HMAC)
 - **RE tools:** Frida (Android hooking), Ghidra (binary decompilation), tcpdump
 
@@ -96,7 +96,7 @@ Client                    P2P Server (52.x:6000)      Device (NVR)
 npm run dev          # Start dev server
 npm run build        # Production build
 npm run typecheck    # TypeScript check (ignore scripts/test-e2e-stream.ts errors)
-npm test -- --run    # Run all tests (98 pass, 1 skipped)
+npm test -- --run    # Run all tests (239 pass, 1 skipped)
 ```
 
 ### Protocol Testing
@@ -113,6 +113,8 @@ npx tsx scripts/test-p2p-to-ffmpeg.ts   # Live stream → H.265 → FFmpeg → H
 npx tsx scripts/test-playback-ps.ts [t] # Playback (t=YYYY-MM-DDTHH:MM:SS) → MPEG-PS → FFmpeg → MP4
 npx tsx scripts/probe-recordings.ts [d] # List recordings (d=YYYY-MM-DD)
 npx tsx scripts/diag-stream-reliability.ts [n] [cooldownSec]  # Stream reliability + clientId diagnostic
+npx tsx scripts/diag-srt-reorder.ts [holdSec]  # Per-packet SRT reorder/loss detector
+npx tsx scripts/diag-source-resolution.ts <streamType> [holdSec]  # ffprobe the raw H.265 SOURCE resolution (1=main 4K, 2=sub 640x480)
 npx tsx scripts/test-vtm-connect.ts     # Test VTM relay connection
 ```
 

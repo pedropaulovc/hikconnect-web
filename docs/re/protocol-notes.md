@@ -336,7 +336,7 @@ SRT delivering in order. A receiver that emits in *arrival* order lets one swapp
 a fragmented NAL (HEVC FU, RFC 7798) reassemble with bytes transposed → corrupt slice → the
 decoder renders only the leading CTUs (top-left) then **grays out**, and every P-frame
 referencing it stays gray until the next IDR. Visible as intermittent flashes of corruption
-(~1 frame in 6 at 720p), recovering each keyframe.
+(roughly 1 frame in 6 — the IDR cadence), recovering each keyframe.
 
 **Implementation:** `handleSrtDataPacket` now re-sequences by SRT sequence number before
 emitting `data`. A small `Map<seq,payload>` buffers packets that arrive ahead of the
@@ -347,9 +347,12 @@ is unchanged (still acks the highest received seq — flow control is independen
 order). Verified end-to-end: 16/16 live frames clean over ~60 s (vs ~1-in-6 gray before), OSD
 clock advancing. Tests: `p2p-session-teardown.integration.test.ts` § "SRT receive reordering".
 
-> **Note on resolution:** "Main (4K)" on the test NVR's Ch 1 decodes at **1280×720**, not 4K —
-> this channel's main stream is 720p. Earlier "4K verified" notes likely refer to a different
-> channel/camera.
+> **Note on resolution:** the test NVR's Ch 1 source streams, measured directly from the raw
+> H.265 before FFmpeg (`scripts/diag-source-resolution.ts` → ffprobe), are **main = 3840×2160
+> (true 4K)** and **sub = 640×480**, both HEVC Main. A "720p" figure seen earlier was the
+> FFmpeg *output*, not the source: the CPU `libx264` path downscales (4K H.264 isn't realtime on
+> CPU). With an NVIDIA GPU the pipeline now NVDEC-decodes + NVENC-encodes at **full source
+> resolution** (no scale filter) — see `src/lib/hls/ffmpeg-pipe.ts` (`buildHlsFfmpegArgs`).
 
 ##### Relay Client ECDH Requirement (Critical Finding)
 

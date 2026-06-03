@@ -115,8 +115,8 @@ carry video-channel sequence numbers. One-line root-cause fix; no architectural 
 
 **Surfaced by the first end-to-end *web UI* demo** (prior runs were all script-based). Live video
 intermittently showed a frame decode only its top-left CTUs then **gray out**, recovering at the
-next keyframe (~1 frame in 6 at 720p). ACK isolation (RESOLVED 2) fixed flow-control *stalls*; it
-never addressed packet *ordering*.
+next keyframe (roughly 1 frame in 6 — the IDR cadence). ACK isolation (RESOLVED 2) fixed
+flow-control *stalls*; it never addressed packet *ordering*.
 
 ### Disproof of "packet loss / missing NAK" (my first hypothesis)
 The live server log showed SRT sequence advancing **exactly 1:1** with received-packet count over
@@ -149,8 +149,13 @@ flow control is orthogonal to delivery order).
   before), OSD clock advancing 10:44:57 → 10:45:59. Tooling: `scripts/diag-srt-reorder.ts`.
 
 ### Aside — resolution, and two web-UI store bugs found the same session
-- "Main (4K)" on the test NVR Ch 1 decodes at **1280×720** — that channel's main stream is 720p,
-  not 4K. Earlier "4K verified" notes refer to a different channel/camera.
+- **Resolution (measured, not assumed):** ffprobe of the raw H.265 *before* FFmpeg
+  (`scripts/diag-source-resolution.ts`) shows the test NVR Ch 1 source is **main = 3840×2160
+  (true 4K)** and **sub = 640×480**, both HEVC Main. A mid-session "720p, not 4K" claim was
+  **wrong** — that 1280×720 was the FFmpeg *output*: the CPU `libx264` fallback downscales because
+  realtime 4K H.264 on CPU is infeasible. With an NVIDIA GPU the pipeline now NVDEC+NVENC
+  transcodes at **full 4K** (`ffmpeg-pipe.ts`, no scale filter) — verified H.264 3840×2160 HLS
+  segments end-to-end through `FfmpegHlsPipe`.
 - The UI had never streamed before; two in-memory singletons were **duplicated across Next.js
   route bundles** (login wrote one `sessionStore`, `/api/devices` read an empty other → 401; same
   latent split between `/stream/start` and `/stream/stop`). Both pinned to `globalThis`.
