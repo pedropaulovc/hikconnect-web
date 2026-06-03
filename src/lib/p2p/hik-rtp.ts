@@ -27,6 +27,23 @@ const SUB_HEADER_LEN = 13 // 0x0d + 4 bytes + 8 bytes sync
 const ANNEX_B_START_CODE = Buffer.from([0x00, 0x00, 0x00, 0x01])
 const FU_NAL_TYPE = 49
 
+/** Hik-RTP types carrying video payload (vs. 0x807f control / 0x0200 IMKH meta). */
+const VIDEO_PACKET_TYPES = new Set([0x8060, 0x8050, 0x8051])
+
+/**
+ * Playback (busType=2) passthrough. Unlike live preview, playback streams are an
+ * MPEG Program Stream container (the NVR stores recordings as .ps and serves them
+ * as-is), NOT raw H.265 NALs. The correct handling is to strip ONLY the 12-byte
+ * Hik-RTP header and feed the rest straight to FFmpeg as `-f mpeg` — no sub-header
+ * strip, no NAL parsing (that's what HikRtpExtractor does for live and it mangles
+ * PS bytes). Returns null for control/non-video packets and empty payloads.
+ */
+export function extractPlaybackPayload(payload: Buffer): Buffer | null {
+  if (payload.length <= HIK_RTP_HEADER_LEN) return null
+  if (!VIDEO_PACKET_TYPES.has(payload.readUInt16BE(0))) return null
+  return payload.subarray(HIK_RTP_HEADER_LEN)
+}
+
 export class HikRtpExtractor extends EventEmitter {
   private nalCount = 0
   private fuFragments: Buffer[] = []

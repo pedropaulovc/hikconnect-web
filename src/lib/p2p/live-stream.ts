@@ -9,7 +9,7 @@
 import { EventEmitter } from 'node:events'
 import { P2PSession, type P2PServer } from './p2p-session'
 import { FfmpegHlsPipe, type HlsConfig } from '../hls/ffmpeg-pipe'
-import { HikRtpExtractor } from './hik-rtp'
+import { HikRtpExtractor, extractPlaybackPayload } from './hik-rtp'
 
 export type LiveStreamConfig = {
   /** Device serial number */
@@ -84,8 +84,10 @@ export class LiveStream extends EventEmitter {
     this.transition('connecting')
 
     try {
-      // Start FFmpeg HLS pipe
-      this.hlsPipe = new FfmpegHlsPipe(this.config.hls)
+      // Start FFmpeg HLS pipe. Playback (busType=2) is an MPEG-PS container;
+      // live preview is a raw H.265 elementary stream — the demuxer must match.
+      const inputFormat = this.config.busType === 2 ? 'mpeg' : 'hevc'
+      this.hlsPipe = new FfmpegHlsPipe({ ...this.config.hls, inputFormat })
       this.hlsPipe.start()
 
       // Start P2P session
@@ -110,15 +112,7 @@ export class LiveStream extends EventEmitter {
         stopTime: this.config.stopTime,
       })
 
-      // Wire P2P data → HikRTP extractor → H.265 NALs → FFmpeg
-      const extractor = new HikRtpExtractor()
-      extractor.on('nalUnit', (nal: Buffer) => {
-        this.bytesReceived += nal.length
-        this.hlsPipe?.write(nal)
-      })
-      this.p2pSession.on('data', (payload: Buffer) => {
-        extractor.processPacket(payload)
-      })
+      this.wireDataPath()
 
       this.p2pSession.on('error', (err: Error) => {
         this.emit('error', err)
@@ -137,6 +131,32 @@ export class LiveStream extends EventEmitter {
       this.cleanup()
       throw err
     }
+  }
+
+  /**
+   * Wire P2P data → FFmpeg. The two bus types deliver different containers:
+   * playback (busType=2) is MPEG-PS (pass the bytes through, `-f mpeg`), live
+   * preview is raw H.265 NALs that need Hik-RTP reassembly (`-f hevc`).
+   */
+  private wireDataPath(): void {
+    if (this.config.busType === 2) {
+      this.p2pSession!.on('data', (payload: Buffer) => {
+        const ps = extractPlaybackPayload(payload)
+        if (!ps) return
+        this.bytesReceived += ps.length
+        this.hlsPipe?.write(ps)
+      })
+      return
+    }
+
+    const extractor = new HikRtpExtractor()
+    extractor.on('nalUnit', (nal: Buffer) => {
+      this.bytesReceived += nal.length
+      this.hlsPipe?.write(nal)
+    })
+    this.p2pSession!.on('data', (payload: Buffer) => {
+      extractor.processPacket(payload)
+    })
   }
 
   async stop(): Promise<void> {

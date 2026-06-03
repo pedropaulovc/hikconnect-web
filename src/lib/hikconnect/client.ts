@@ -181,7 +181,7 @@ export class HikConnectClient {
     const data = await this.get<RecordListResponse>(
       `/v3/streaming/records?deviceSerial=${deviceSerial}&channelNo=${channelNo}&startTime=${startTime}&stopTime=${stopTime}&size=500`
     )
-    return data.files ?? []
+    return data.records ?? []
   }
 
   async getAlarms(

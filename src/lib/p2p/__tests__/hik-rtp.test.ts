@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { HikRtpExtractor } from '../hik-rtp'
+import { HikRtpExtractor, extractPlaybackPayload } from '../hik-rtp'
 
 describe('HikRtpExtractor', () => {
   it('ignores non-video packet types', () => {
@@ -188,5 +188,52 @@ describe('HikRtpExtractor', () => {
       expect((nals[0][4] >> 1) & 0x3f).toBe(19) // IDR
       expect((nals[1][4] >> 1) & 0x3f).toBe(1)  // TRAIL_R
     })
+  })
+})
+
+describe('extractPlaybackPayload (MPEG-PS passthrough)', () => {
+  // Playback streams are an MPEG Program Stream container, NOT raw H.265 NALs.
+  // The correct handling is to strip ONLY the 12-byte Hik-RTP header and feed
+  // the rest straight to FFmpeg as `-f mpeg` — no sub-header strip, no NAL parse.
+
+  it('strips the 12-byte Hik-RTP header from video packets, passing PS bytes through', () => {
+    // 12B Hik-RTP header + MPEG-PS pack start (00 00 01 BA ...)
+    const ps = Buffer.from([0x00, 0x00, 0x01, 0xba, 0x44, 0x00, 0x04, 0x00])
+    const packet = Buffer.concat([Buffer.alloc(12), ps])
+    packet.writeUInt16BE(0x8050, 0)
+
+    const out = extractPlaybackPayload(packet)
+    expect(out).toEqual(ps)
+  })
+
+  it('passes PS bytes through verbatim — does NOT strip a 13-byte sub-header', () => {
+    // A pack header byte at offset 12 must survive (live path would treat 0x0d
+    // as a sub-header marker; playback must not).
+    const ps = Buffer.from([0x0d, 0x00, 0x00, 0x01, 0xe0, 0x10, 0x00])
+    const packet = Buffer.concat([Buffer.alloc(12), ps])
+    packet.writeUInt16BE(0x8060, 0)
+
+    expect(extractPlaybackPayload(packet)).toEqual(ps)
+  })
+
+  it('accepts all three video packet types (0x8050/0x8060/0x8051)', () => {
+    for (const type of [0x8050, 0x8060, 0x8051]) {
+      const packet = Buffer.alloc(12 + 4)
+      packet.writeUInt16BE(type, 0)
+      packet.fill(0xab, 12)
+      expect(extractPlaybackPayload(packet)).toEqual(Buffer.from([0xab, 0xab, 0xab, 0xab]))
+    }
+  })
+
+  it('ignores control/non-video packets (e.g. 0x807f keepalive)', () => {
+    const control = Buffer.alloc(64)
+    control.writeUInt16BE(0x807f, 0)
+    expect(extractPlaybackPayload(control)).toBeNull()
+  })
+
+  it('ignores packets with no payload past the header', () => {
+    const packet = Buffer.alloc(12)
+    packet.writeUInt16BE(0x8050, 0)
+    expect(extractPlaybackPayload(packet)).toBeNull()
   })
 })

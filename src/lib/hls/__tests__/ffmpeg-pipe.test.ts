@@ -84,4 +84,46 @@ describe('buildHlsFfmpegArgs', () => {
       expect(args[args.length - 1]).toBe(PLAYLIST)
     })
   })
+
+  describe('input container format', () => {
+    // Live preview delivers a raw H.265 elementary stream (-f hevc); playback
+    // delivers an MPEG Program Stream container (-f mpeg). The demuxer must match
+    // or FFmpeg never finds a keyframe and produces no segments.
+
+    // The input demuxer is the value after the first '-f' (a later '-f hls' is
+    // the output muxer); '-i pipe:0' separates input args from output args.
+    const inputDemuxer = (args: string[]) => args[args.indexOf('-f') + 1]
+
+    it('defaults to the raw HEVC demuxer for live preview', () => {
+      for (const enc of ['nvenc', 'libx264'] as const) {
+        const args = buildHlsFfmpegArgs(enc, 'main', 2, OUT, PLAYLIST)
+        expect(inputDemuxer(args)).toBe('hevc')
+        // raw demuxer needs an explicit input framerate (PS carries its own PTS)
+        expect(args).toContain('-framerate')
+      }
+    })
+
+    it('uses the MPEG-PS demuxer for playback', () => {
+      for (const enc of ['nvenc', 'libx264'] as const) {
+        const args = buildHlsFfmpegArgs(enc, 'main', 2, OUT, PLAYLIST, 'mpeg')
+        expect(inputDemuxer(args)).toBe('mpeg')
+        // raw hevc demuxer must not appear; only output '-f hls' beyond the input
+        const inputArgs = args.slice(0, args.indexOf('-i'))
+        expect(inputArgs).not.toContain('hevc')
+        // PS carries its own timestamps — no synthetic -framerate
+        expect(args).not.toContain('-framerate')
+      }
+    })
+
+    it('still transcodes the HEVC payload to H.264 HLS regardless of container', () => {
+      const nvenc = buildHlsFfmpegArgs('nvenc', 'main', 2, OUT, PLAYLIST, 'mpeg')
+      expect(nvenc).toContain('hevc_cuvid')   // GPU-decode the HEVC inside the PS
+      expect(nvenc).toContain('h264_nvenc')
+      expect(nvenc[nvenc.length - 1]).toBe(PLAYLIST)
+
+      const cpu = buildHlsFfmpegArgs('libx264', 'main', 2, OUT, PLAYLIST, 'mpeg')
+      expect(cpu).toContain('libx264')
+      expect(cpu[cpu.length - 1]).toBe(PLAYLIST)
+    })
+  })
 })
