@@ -9,6 +9,7 @@
 import { EventEmitter } from 'node:events'
 import { P2PSession, type P2PServer } from './p2p-session'
 import { FfmpegHlsPipe, type HlsConfig } from '../hls/ffmpeg-pipe'
+import type { VideoSink } from '../hls/video-sink'
 import { HikRtpExtractor, extractPlaybackPayload } from './hik-rtp'
 
 export type LiveStreamConfig = {
@@ -56,24 +57,45 @@ export type LiveStreamConfig = {
 
 export type LiveStreamState = 'idle' | 'connecting' | 'streaming' | 'stopped' | 'error'
 
+/** Builds the sink that consumes the decoded video for a given stream config. */
+export type SinkFactory = (config: LiveStreamConfig) => VideoSink
+
+/**
+ * Default sink: an HLS pipe for browser playback. Playback (busType=2) is an
+ * MPEG-PS container; live preview is a raw H.265 elementary stream — the
+ * demuxer must match (`-f mpeg` vs `-f hevc`). The export path injects an MP4
+ * sink instead via the constructor's `sinkFactory` arg.
+ */
+const defaultHlsSinkFactory: SinkFactory = (config) =>
+  new FfmpegHlsPipe({ ...config.hls, inputFormat: config.busType === 2 ? 'mpeg' : 'hevc' })
+
 export class LiveStream extends EventEmitter {
   private config: LiveStreamConfig
+  private sinkFactory: SinkFactory
   private p2pSession: P2PSession | null = null
-  private hlsPipe: FfmpegHlsPipe | null = null
+  private sink: VideoSink | null = null
   private _state: LiveStreamState = 'idle'
   private bytesReceived = 0
 
-  constructor(config: LiveStreamConfig) {
+  constructor(config: LiveStreamConfig, sinkFactory: SinkFactory = defaultHlsSinkFactory) {
     super()
     this.config = config
+    this.sinkFactory = sinkFactory
   }
 
   get state(): LiveStreamState {
     return this._state
   }
 
+  /** The active sink (e.g. the export route reads MP4 progress through it). */
+  getSink(): VideoSink | null {
+    return this.sink
+  }
+
+  /** HLS playlist path — empty unless the sink is an HLS pipe (live/playback view). */
   get playlistPath(): string {
-    return this.hlsPipe?.getPlaylistPath() ?? ''
+    if (this.sink instanceof FfmpegHlsPipe) return this.sink.getPlaylistPath()
+    return ''
   }
 
   async start(): Promise<string> {
@@ -84,11 +106,9 @@ export class LiveStream extends EventEmitter {
     this.transition('connecting')
 
     try {
-      // Start FFmpeg HLS pipe. Playback (busType=2) is an MPEG-PS container;
-      // live preview is a raw H.265 elementary stream — the demuxer must match.
-      const inputFormat = this.config.busType === 2 ? 'mpeg' : 'hevc'
-      this.hlsPipe = new FfmpegHlsPipe({ ...this.config.hls, inputFormat })
-      this.hlsPipe.start()
+      // Build the injected sink (HLS by default; MP4 for export) and start it.
+      this.sink = this.sinkFactory(this.config)
+      this.sink.start()
 
       // Start P2P session
       this.p2pSession = new P2PSession({
@@ -125,7 +145,7 @@ export class LiveStream extends EventEmitter {
       await this.p2pSession.start()
       this.transition('streaming')
 
-      return this.hlsPipe.getPlaylistPath()
+      return this.playlistPath
     } catch (err) {
       this.transition('error')
       this.cleanup()
@@ -144,7 +164,7 @@ export class LiveStream extends EventEmitter {
         const ps = extractPlaybackPayload(payload)
         if (!ps) return
         this.bytesReceived += ps.length
-        this.hlsPipe?.write(ps)
+        this.sink?.write(ps)
       })
       return
     }
@@ -152,7 +172,7 @@ export class LiveStream extends EventEmitter {
     const extractor = new HikRtpExtractor()
     extractor.on('nalUnit', (nal: Buffer) => {
       this.bytesReceived += nal.length
-      this.hlsPipe?.write(nal)
+      this.sink?.write(nal)
     })
     this.p2pSession!.on('data', (payload: Buffer) => {
       extractor.processPacket(payload)
@@ -174,7 +194,7 @@ export class LiveStream extends EventEmitter {
   private async cleanup(): Promise<void> {
     await this.p2pSession?.stop()
     this.p2pSession = null
-    this.hlsPipe?.stop()
-    this.hlsPipe = null
+    await this.sink?.stop()
+    this.sink = null
   }
 }

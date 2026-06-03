@@ -4,6 +4,7 @@ import { use, useState } from 'react'
 import NavHeader from '@/components/NavHeader'
 import VideoPlayer from '@/components/VideoPlayer'
 import TimelineBar from '@/components/TimelineBar'
+import ExportPanel from '@/components/ExportPanel'
 import type { Recording } from '@/components/TimelineBar'
 import type { PlaybackState, AlarmPanelState } from '@/app/camera/stream-states'
 import { buildRecordingsUrl, buildAlarmsUrl } from '@/app/devices/helpers'
@@ -172,6 +173,12 @@ export default function PlaybackPage({ params }: { params: Promise<{ serial: str
                 </div>
               ))}
             </div>
+            <ExportPanel
+              serial={serial}
+              channel={Number(ch)}
+              defaultStart={(activeRecording ?? recordings[0]).begin}
+              defaultStop={(activeRecording ?? recordings[0]).end}
+            />
           </>
         )}
 

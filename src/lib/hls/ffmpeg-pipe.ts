@@ -1,6 +1,7 @@
 import { spawn, ChildProcess, execFileSync } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
+import type { VideoSink } from './video-sink'
 
 export type StreamQuality = 'sub' | 'main'
 
@@ -113,7 +114,7 @@ export function buildHlsFfmpegArgs(
   ]
 }
 
-export class FfmpegHlsPipe {
+export class FfmpegHlsPipe implements VideoSink {
   private process: ChildProcess | null = null
   private playlistPath: string
   private preBuffer: Buffer[] = []
