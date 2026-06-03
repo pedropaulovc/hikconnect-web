@@ -80,7 +80,7 @@ type: project
 
 ### Code Quality
 
-- 132 tests passing, 1 skipped (Vitest)
+- 239 tests passing, 1 skipped (Vitest)
 - Clean TypeScript build
 - Dead code removed from LiveStream and P2PSession
 - HikRtpExtractor unit tests added

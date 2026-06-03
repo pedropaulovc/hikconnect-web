@@ -30,6 +30,9 @@ dist-ssr
 .next/
 out/
 
+# TypeScript incremental build cache
+*.tsbuildinfo
+
 # Test artifacts
 test-results/
 playwright-report/

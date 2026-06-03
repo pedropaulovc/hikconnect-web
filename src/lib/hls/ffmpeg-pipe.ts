@@ -1,4 +1,4 @@
-import { spawn, ChildProcess } from 'node:child_process'
+import { spawn, ChildProcess, execFileSync } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -8,6 +8,97 @@ export type HlsConfig = {
   outputDir: string
   segmentDuration?: number
   quality?: StreamQuality
+}
+
+/**
+ * Transcode backend. 'nvenc' = full-resolution GPU pipeline (NVDEC decode +
+ * NVENC encode, zero-copy on the GPU) — serves the native source (main 4K,
+ * sub 640×480). 'libx264' = CPU fallback that downscales (realtime 4K H.264 on
+ * CPU is infeasible). Detected once and cached: requires both hevc_cuvid
+ * (decode) and h264_nvenc (encode) in the local ffmpeg.
+ */
+export type EncoderMode = 'nvenc' | 'libx264'
+let cachedEncoder: EncoderMode | null = null
+function detectEncoder(): EncoderMode {
+  if (cachedEncoder) return cachedEncoder
+  try {
+    const enc = execFileSync('ffmpeg', ['-hide_banner', '-encoders'], { encoding: 'utf8' })
+    const dec = execFileSync('ffmpeg', ['-hide_banner', '-decoders'], { encoding: 'utf8' })
+    cachedEncoder = enc.includes('h264_nvenc') && dec.includes('hevc_cuvid') ? 'nvenc' : 'libx264'
+  } catch {
+    cachedEncoder = 'libx264'
+  }
+  console.log(`[ffmpeg] transcode backend: ${cachedEncoder}`)
+  return cachedEncoder
+}
+
+/**
+ * Build the FFmpeg argv for the HLS transcode. Pure function (no I/O) so the
+ * two backends can be regression-tested. All streams transcode H.265→H.264
+ * because browsers don't support H.265 in HLS.
+ */
+export function buildHlsFfmpegArgs(
+  encoder: EncoderMode,
+  quality: StreamQuality,
+  segDuration: number,
+  outputDir: string,
+  playlistPath: string,
+): string[] {
+  const hlsArgs = [
+    '-f', 'hls',
+    '-hls_time', String(segDuration),
+    '-hls_list_size', '10',
+    '-hls_flags', 'delete_segments+append_list',
+    '-hls_segment_filename', join(outputDir, 'seg_%03d.ts'),
+    playlistPath,
+  ]
+
+  if (encoder === 'nvenc') {
+    // Full-resolution GPU pipeline: NVDEC decodes the H.265 and NVENC encodes
+    // H.264, frames staying in GPU memory the whole way (no -vf, zero-copy).
+    // No downscale — serves the native source (main 3840×2160, sub 640×480).
+    return [
+      '-probesize', '500000',
+      '-analyzeduration', '2000000',
+      '-err_detect', 'ignore_err',
+      '-hwaccel', 'cuda',
+      '-hwaccel_output_format', 'cuda',
+      '-c:v', 'hevc_cuvid',
+      '-f', 'hevc',
+      '-framerate', '25',
+      '-i', 'pipe:0',
+      '-c:v', 'h264_nvenc',
+      '-preset', 'p4',      // balanced quality/speed; a 3090 does 4K realtime easily
+      '-tune', 'll',        // low-latency for live HLS
+      '-rc', 'vbr',
+      '-cq', quality === 'main' ? '23' : '26',
+      '-bf', '0',           // no B-frames → lower latency
+      '-g', '25',
+      ...hlsArgs,
+    ]
+  }
+
+  // CPU fallback (no NVIDIA GPU): libx264 + downscale — realtime 4K H.264 on
+  // CPU is infeasible, so main 4K→720p, sub→360p.
+  const scale = quality === 'main' ? '1280:720' : '640:360'
+  const crf = quality === 'main' ? '28' : '30'
+  return [
+    '-probesize', '500000',
+    '-analyzeduration', '2000000',
+    '-err_detect', 'ignore_err',
+    '-f', 'hevc',
+    '-framerate', '25',
+    '-i', 'pipe:0',
+    '-c:v', 'libx264',
+    '-preset', 'ultrafast',
+    '-tune', 'zerolatency',
+    '-vf', `scale=${scale}`,
+    '-crf', crf,
+    '-g', '25',
+    '-sc_threshold', '0',
+    '-x264-params', 'sliced-threads=0:threads=4',  // prevent slice boundary artifacts
+    ...hlsArgs,
+  ]
 }
 
 export class FfmpegHlsPipe {
@@ -60,6 +151,12 @@ export class FfmpegHlsPipe {
       console.error('FFmpeg error:', err)
     })
 
+    // If FFmpeg exits, in-flight writes to its stdin surface as an async EPIPE
+    // 'error' event — swallow it so an unhandled error can't crash the server.
+    this.process.stdin?.on('error', (err) => {
+      console.error('[ffmpeg] stdin error (FFmpeg likely exited):', err.message)
+    })
+
     this.process.stderr?.on('data', (data: Buffer) => {
       // FFmpeg logs to stderr
       const line = data.toString().trim()
@@ -68,42 +165,13 @@ export class FfmpegHlsPipe {
   }
 
   private buildFfmpegArgs(quality: StreamQuality, segDuration: number): string[] {
-    const inputArgs = [
-      '-probesize', '500000',
-      '-analyzeduration', '2000000',
-      '-err_detect', 'ignore_err',
-      '-f', 'hevc',
-      '-framerate', '25',
-      '-i', 'pipe:0',
-    ]
-
-    // Both streams transcode H.265→H.264 (browsers don't support H.265 in HLS).
-    // Main: 4K source → 720p output (best balance of quality vs CPU for realtime)
-    // Sub: sub-stream source → 360p output (lightweight)
-    const scale = quality === 'main' ? '1280:720' : '640:360'
-    const crf = quality === 'main' ? '28' : '30'
-    const videoArgs = [
-      '-c:v', 'libx264',
-      '-preset', 'ultrafast',
-      '-tune', 'zerolatency',
-      '-vf', `scale=${scale}`,
-      '-crf', crf,
-      '-g', '25',
-      '-sc_threshold', '0',
-      '-x264-params', 'sliced-threads=0:threads=4',  // prevent slice boundary artifacts
-    ]
-
-    const segExt = 'ts'
-    const hlsArgs = [
-      '-f', 'hls',
-      '-hls_time', String(segDuration),
-      '-hls_list_size', '10',
-      '-hls_flags', 'delete_segments+append_list',
-      '-hls_segment_filename', join(this.config.outputDir, `seg_%03d.${segExt}`),
+    return buildHlsFfmpegArgs(
+      detectEncoder(),
+      quality,
+      segDuration,
+      this.config.outputDir,
       this.playlistPath,
-    ]
-
-    return [...inputArgs, ...videoArgs, ...hlsArgs]
+    )
   }
 
   stop(): void {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { FfmpegHlsPipe } from '../ffmpeg-pipe'
+import { FfmpegHlsPipe, buildHlsFfmpegArgs } from '../ffmpeg-pipe'
 
 describe('FFmpeg HLS pipe', () => {
   it('constructs with output directory', () => {
@@ -22,5 +22,66 @@ describe('FFmpeg HLS pipe', () => {
     pipe.start()
     // write() should buffer data without throwing (FFmpeg starts after 200KB)
     expect(() => pipe.write(Buffer.from('test'))).not.toThrow()
+  })
+})
+
+describe('buildHlsFfmpegArgs', () => {
+  const PLAYLIST = '/tmp/hls/stream.m3u8'
+  const OUT = '/tmp/hls'
+
+  describe('nvenc (GPU full-resolution)', () => {
+    it('decodes with NVDEC and encodes with NVENC, zero-copy on the GPU', () => {
+      const args = buildHlsFfmpegArgs('nvenc', 'main', 2, OUT, PLAYLIST)
+      expect(args).toContain('hevc_cuvid')
+      expect(args).toContain('h264_nvenc')
+      // zero-copy: frames stay in CUDA memory in and out
+      expect(args).toContain('cuda')
+      expect(args[args.indexOf('-hwaccel_output_format') + 1]).toBe('cuda')
+    })
+
+    it('does NOT downscale — serves the native source resolution', () => {
+      for (const q of ['main', 'sub'] as const) {
+        const args = buildHlsFfmpegArgs('nvenc', q, 2, OUT, PLAYLIST)
+        expect(args).not.toContain('-vf')
+        expect(args.join(' ')).not.toMatch(/scale=/)
+      }
+    })
+
+    it('uses a higher quality target for the main stream than the sub', () => {
+      const main = buildHlsFfmpegArgs('nvenc', 'main', 2, OUT, PLAYLIST)
+      const sub = buildHlsFfmpegArgs('nvenc', 'sub', 2, OUT, PLAYLIST)
+      // lower -cq = higher quality
+      expect(main[main.indexOf('-cq') + 1]).toBe('23')
+      expect(sub[sub.indexOf('-cq') + 1]).toBe('26')
+    })
+
+    it('emits an HLS playlist at the given path', () => {
+      const args = buildHlsFfmpegArgs('nvenc', 'main', 4, OUT, PLAYLIST)
+      expect(args).toContain('hls')
+      expect(args[args.length - 1]).toBe(PLAYLIST)
+      expect(args[args.indexOf('-hls_time') + 1]).toBe('4')
+    })
+  })
+
+  describe('libx264 (CPU fallback)', () => {
+    it('uses the software encoder, never the GPU one', () => {
+      const args = buildHlsFfmpegArgs('libx264', 'main', 2, OUT, PLAYLIST)
+      expect(args).toContain('libx264')
+      expect(args).not.toContain('h264_nvenc')
+      expect(args).not.toContain('hevc_cuvid')
+    })
+
+    it('downscales (4K is infeasible on CPU): main→720p, sub→360p', () => {
+      const main = buildHlsFfmpegArgs('libx264', 'main', 2, OUT, PLAYLIST)
+      const sub = buildHlsFfmpegArgs('libx264', 'sub', 2, OUT, PLAYLIST)
+      expect(main[main.indexOf('-vf') + 1]).toBe('scale=1280:720')
+      expect(sub[sub.indexOf('-vf') + 1]).toBe('scale=640:360')
+    })
+
+    it('emits an HLS playlist at the given path', () => {
+      const args = buildHlsFfmpegArgs('libx264', 'sub', 2, OUT, PLAYLIST)
+      expect(args).toContain('hls')
+      expect(args[args.length - 1]).toBe(PLAYLIST)
+    })
   })
 })
