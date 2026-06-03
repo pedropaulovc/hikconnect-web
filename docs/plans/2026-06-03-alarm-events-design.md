@@ -31,12 +31,22 @@ Response:
 }
 ```
 
-**Verified live (2026-06-03):** offset pagination returns distinct sets; `alarmStart`/`alarmEnd`
-window narrows results; `totalResults` reflects the window. Each alarm carries `channelNo`,
-`alarmName` (`"Lobby"`), `alarmType` (`10002`), `sampleName` (`"Motion Detection Alarm"`),
-`alarmMessage` (`"Lobby Motion Detection Alarm"`), `alarmStartTime` (epoch ms),
-`alarmStartTimeStr` (`"2026-06-03 11:49:17"`), `picUrl` (signed ezvizlife.com thumbnail,
-directly fetchable when `isEncrypt=0`), `isCheck` (read/unread), `preTime`, `delayTime`.
+**Verified live (2026-06-03):** offset pagination returns distinct sets going back in time
+(offset=1000 → prior day, not capped at 100); `alarmStart`/`alarmEnd` window narrows results.
+Each alarm carries `channelNo`, `alarmName` (`"Lobby"`), `alarmType` (`10002`), `sampleName`
+(`"Motion Detection Alarm"`), `alarmMessage` (`"Lobby Motion Detection Alarm"`), `alarmStartTime`
+(epoch ms), `alarmStartTimeStr` (`"2026-06-03 11:49:17"`), `picUrl` (signed ezvizlife.com
+thumbnail, directly fetchable when `isEncrypt=0`), `isCheck` (read/unread), `preTime`, `delayTime`.
+
+**Two behaviors that shape the design (verified, not assumed):**
+
+1. **`totalResults` is unreliable** — it reports a placeholder `100` on the first page (offset=0)
+   and the true count (`12228`) only once `offset ≥ limit`. **Never drive UI/pagination off
+   `totalResults`; use `hasNext`.**
+2. **Offset is page-quantized to `limit`** — the server floors the requested offset to
+   `floor(offset/limit) * limit` and echoes the snapped value as `page.offset` (e.g. offset=95
+   with limit=50 returns the same page as offset=50). **The cursor must stay a multiple of the
+   page size:** advance by `page.offset + limit`, and keep `limit` fixed across requests.
 
 **Why not `/v3/alarms/v2/advanced`:** that endpoint ignores offset/time filters — always returns
 the latest ~100. **Why not `/v3/unifiedmsg/list`:** newer endTime-cursor variant; `advanced`
@@ -103,10 +113,13 @@ export async function collectChannelAlarms(
 ```
 
 Pull a device page, filter by `channelNo`, accumulate; stop at ≥`want` matches, `!hasNext`, or
-`maxPages` (cap). `nextOffset` = device offset after the last scanned page (clean load-more
-resume); `hasMore` reflects whether more device pages remain. Sequential with early-exit — a
-50-event device page usually yields enough for one channel in 1 RTT; `maxPages=4` bounds the
-worst case. Pure (takes a `fetchPage` callback) so it unit-tests without network.
+`maxPages` (cap). `nextOffset` = `page.offset + devicePage` of the last scanned page — snap-proof
+and page-aligned, so load-more resumes cleanly with no gap/overlap (see offset-quantization
+note above); `hasMore` reflects whether more device pages remain (`page.hasNext`). Sequential
+with early-exit — a 50-event device page usually yields enough for one channel in 1 RTT;
+`maxPages=4` bounds the worst case for sparse channels. Pure (takes a `fetchPage` callback) so it
+unit-tests without network. Note channels are interleaved and sparse (a device page can contain
+0 events for a given channel), which is exactly why accumulation beats a thin passthrough.
 
 ### 4. Route — `src/app/api/devices/[serial]/[channel]/alarms/route.ts`
 
