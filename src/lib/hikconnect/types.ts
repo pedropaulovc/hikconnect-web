@@ -112,16 +112,17 @@ export type RelayServerResponse = ApiResponse<{
   streamServerConfig: StreamServerConfig
 }>
 
-/** A single recording file */
+/** A single recording segment */
 export type RecordFile = {
+  channelType?: string
   begin: string
   end: string
   type: string
 }
 
-/** GET /v3/streaming/records response */
+/** GET /v3/streaming/records response — segments are nested under `records` */
 export type RecordListResponse = ApiResponse<{
-  files: RecordFile[]
+  records: RecordFile[]
 }>
 
 /** A single alarm/motion event from /v3/alarms/advanced */

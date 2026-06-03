@@ -58,6 +58,7 @@ export async function POST(req: Request) {
       hls: {
         outputDir: hlsDir,
         segmentDuration: 4,
+        quality: 'main', // playback uses streamType 0 (main); avoids 360p downscale on the libx264 fallback
       },
     })
 

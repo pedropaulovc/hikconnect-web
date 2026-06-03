@@ -4,10 +4,19 @@ import { join } from 'node:path'
 
 export type StreamQuality = 'sub' | 'main'
 
+/**
+ * Input container fed to FFmpeg. 'hevc' = raw H.265 elementary stream (live
+ * preview, after HikRtpExtractor reassembles NALs). 'mpeg' = MPEG Program Stream
+ * (playback — the NVR serves recordings as a PS container). The demuxer must
+ * match the source or FFmpeg never finds a keyframe and emits no segments.
+ */
+export type InputFormat = 'hevc' | 'mpeg'
+
 export type HlsConfig = {
   outputDir: string
   segmentDuration?: number
   quality?: StreamQuality
+  inputFormat?: InputFormat
 }
 
 /**
@@ -43,7 +52,14 @@ export function buildHlsFfmpegArgs(
   segDuration: number,
   outputDir: string,
   playlistPath: string,
+  inputFormat: InputFormat = 'hevc',
 ): string[] {
+  // Input demuxer. The raw 'hevc' elementary stream has no container timestamps,
+  // so we impose a synthetic framerate; MPEG-PS carries its own PTS — don't.
+  const inputArgs = inputFormat === 'mpeg'
+    ? ['-f', 'mpeg', '-i', 'pipe:0']
+    : ['-f', 'hevc', '-framerate', '25', '-i', 'pipe:0']
+
   const hlsArgs = [
     '-f', 'hls',
     '-hls_time', String(segDuration),
@@ -64,9 +80,7 @@ export function buildHlsFfmpegArgs(
       '-hwaccel', 'cuda',
       '-hwaccel_output_format', 'cuda',
       '-c:v', 'hevc_cuvid',
-      '-f', 'hevc',
-      '-framerate', '25',
-      '-i', 'pipe:0',
+      ...inputArgs,
       '-c:v', 'h264_nvenc',
       '-preset', 'p4',      // balanced quality/speed; a 3090 does 4K realtime easily
       '-tune', 'll',        // low-latency for live HLS
@@ -86,9 +100,7 @@ export function buildHlsFfmpegArgs(
     '-probesize', '500000',
     '-analyzeduration', '2000000',
     '-err_detect', 'ignore_err',
-    '-f', 'hevc',
-    '-framerate', '25',
-    '-i', 'pipe:0',
+    ...inputArgs,
     '-c:v', 'libx264',
     '-preset', 'ultrafast',
     '-tune', 'zerolatency',
@@ -171,6 +183,7 @@ export class FfmpegHlsPipe {
       segDuration,
       this.config.outputDir,
       this.playlistPath,
+      this.config.inputFormat ?? 'hevc',
     )
   }
 
