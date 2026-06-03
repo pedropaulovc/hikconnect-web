@@ -1,1 +1,1 @@
-{"root":["./src/main.tsx","./src/vite-env.d.ts"],"version":"5.9.3"}
+{"root":["./src/App.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/data/cameras.ts","./src/data/data.test.ts","./src/data/events.ts","./src/data/index.ts","./src/data/recordings.ts","./src/data/types.ts","./src/pages/CameraDetailPage.tsx","./src/pages/EventsPage.tsx","./src/pages/LivePage.tsx","./src/pages/PlaybackPage.tsx","./src/pages/RecordingsPage.tsx","./src/test/setup.ts"],"version":"5.9.3"}

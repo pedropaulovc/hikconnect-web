@@ -1,0 +1,31 @@
+/* CCTV Demo — dark "security console" theme.
+   Force dark palette regardless of system preference for a consistent demo. */
+
+:root {
+  --ion-color-primary: #3b82f6;
+  --ion-color-primary-rgb: 59, 130, 246;
+  --ion-color-primary-contrast: #ffffff;
+  --ion-color-primary-contrast-rgb: 255, 255, 255;
+  --ion-color-primary-shade: #347ad8;
+  --ion-color-primary-tint: #4f8ff7;
+
+  --ion-background-color: #0d1117;
+  --ion-background-color-rgb: 13, 17, 23;
+  --ion-text-color: #e6edf3;
+  --ion-text-color-rgb: 230, 237, 243;
+
+  --ion-toolbar-background: #161b22;
+  --ion-tab-bar-background: #161b22;
+  --ion-item-background: #161b22;
+  --ion-card-background: #161b22;
+
+  --ion-border-color: #21262d;
+  --ion-color-step-50: #161b22;
+  --ion-color-step-100: #1c222b;
+  --ion-color-step-150: #21262d;
+}
+
+/* Letterbox video players nicely on the dark background */
+video {
+  background: #000;
+}
