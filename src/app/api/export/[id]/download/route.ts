@@ -17,7 +17,17 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: 'export not finished' }, { status: 409 })
   }
 
-  const size = statSync(job.outputPath).size
+  // The TTL sweep can fire in the gap between the 'done' check and this stat;
+  // a missing file means the export was already swept — drop the stale job and
+  // 404 instead of letting statSync throw an unhandled 500 (mirrors status route).
+  let size: number
+  try {
+    size = statSync(job.outputPath).size
+  } catch {
+    exportJobs.delete(id)
+    return NextResponse.json({ error: 'not found' }, { status: 404 })
+  }
+
   const nodeStream = createReadStream(job.outputPath)
 
   // Clean up the export dir once the file has been fully streamed to the client.

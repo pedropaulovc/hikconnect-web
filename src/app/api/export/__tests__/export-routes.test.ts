@@ -223,4 +223,19 @@ describe('GET /api/export/[id]/download', () => {
     expect(body.length).toBe(size)
     expect(body).toEqual(Buffer.from('MP4-FIXTURE-PAYLOAD-bytes-1234567890'))
   })
+
+  it('404 (not a throw) when the job is done but the file was already swept', async () => {
+    // The TTL sweep can delete the file in the gap between the 'done' check and
+    // statSync; the handler must 404 cleanly instead of crashing with ENOENT.
+    const { id, outputPath } = seedJob({ state: 'done' })
+    rmSync(outputPath, { force: true })
+
+    const { GET } = await import('../[id]/download/route')
+    const res = await GET(new Request(`http://localhost/api/export/${id}/download`), reqParams(id))
+
+    expect(res.status).toBe(404)
+    expect(await res.json()).toEqual({ error: 'not found' })
+    // The stale registry entry is dropped on the way out.
+    expect(exportJobs.has(id)).toBe(false)
+  })
 })
