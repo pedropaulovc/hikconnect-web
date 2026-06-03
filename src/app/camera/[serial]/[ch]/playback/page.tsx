@@ -199,7 +199,7 @@ export default function PlaybackPage({ params }: { params: Promise<{ serial: str
                 {ev.isEncrypt === 0 && ev.picUrl
                   ? (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img src={ev.picUrl} alt="" className={styles.eventThumb} loading="lazy" />
+                    <img src={ev.picUrl} alt={ev.alarmMessage} className={styles.eventThumb} loading="lazy" />
                   )
                   : <div className={styles.eventThumbPlaceholder} />}
                 <div className={styles.eventMeta}>
