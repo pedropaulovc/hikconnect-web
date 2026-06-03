@@ -150,4 +150,59 @@ describe('HikConnectClient', () => {
       await expect(client.getP2PConfig('UNKNOWN')).rejects.toThrow('No P2P servers found for device UNKNOWN')
     })
   })
+
+  describe('getAlarms', () => {
+    const sessionInit = { sessionId: 'sess123', refreshSessionId: 'rf456', apiDomain: 'https://api.hik-connect.com', expiresAt: Date.now() + 3600000 }
+
+    it('builds the advanced-alarms query and returns alarms + page', async () => {
+      const mockFetch = vi.fn(async (_url: string, _init?: RequestInit) =>
+        new Response(JSON.stringify({
+          meta: { code: 200, message: 'OK' },
+          page: { offset: 0, limit: 50, totalResults: 100, hasNext: true },
+          alarms: [{ alarmId: 'a1', channelNo: 5, alarmMessage: 'Bikes Motion Detection Alarm' }],
+        }), { status: 200 })
+      )
+      const client = new HikConnectClient({ baseUrl: 'https://api.hik-connect.com', fetch: mockFetch as unknown as typeof fetch })
+      client.setSession(sessionInit)
+
+      const result = await client.getAlarms('L38239367', {
+        alarmStart: '2026-06-03 00:00:00', alarmEnd: '2026-06-03 13:00:00', offset: 0, limit: 50,
+      })
+
+      expect(result.alarms).toHaveLength(1)
+      expect(result.alarms[0].channelNo).toBe(5)
+      expect(result.page.hasNext).toBe(true)
+
+      const url = new URL(mockFetch.mock.lastCall![0] as string)
+      expect(url.pathname).toBe('/v3/alarms/advanced')
+      expect(url.searchParams.get('deviceSerial')).toBe('L38239367')
+      expect(url.searchParams.get('queryType')).toBe('-1')
+      expect(url.searchParams.get('alarmType')).toBe('-1')
+      expect(url.searchParams.get('limit')).toBe('50')
+      expect(url.searchParams.get('offset')).toBe('0')
+      expect(url.searchParams.get('alarmStart')).toBe('2026-06-03 00:00:00')
+      expect(url.searchParams.get('alarmEnd')).toBe('2026-06-03 13:00:00')
+    })
+
+    it('throws when meta.code is not 200', async () => {
+      const mockFetch = vi.fn(async () =>
+        new Response(JSON.stringify({ meta: { code: 99991, message: 'session expired' } }), { status: 200 })
+      )
+      const client = new HikConnectClient({ baseUrl: 'https://api.hik-connect.com', fetch: mockFetch as unknown as typeof fetch })
+      client.setSession(sessionInit)
+      await expect(client.getAlarms('L38239367', { alarmStart: 'x', alarmEnd: 'y' })).rejects.toThrow('session expired')
+    })
+
+    it('defaults offset=0 and limit=50 when omitted', async () => {
+      const mockFetch = vi.fn(async (_url: string, _init?: RequestInit) =>
+        new Response(JSON.stringify({ meta: { code: 200, message: 'OK' }, page: { offset: 0, limit: 50, totalResults: 0, hasNext: false }, alarms: [] }), { status: 200 })
+      )
+      const client = new HikConnectClient({ baseUrl: 'https://api.hik-connect.com', fetch: mockFetch as unknown as typeof fetch })
+      client.setSession(sessionInit)
+      await client.getAlarms('L38239367', { alarmStart: 'a', alarmEnd: 'b' })
+      const url = new URL(mockFetch.mock.lastCall![0] as string)
+      expect(url.searchParams.get('offset')).toBe('0')
+      expect(url.searchParams.get('limit')).toBe('50')
+    })
+  })
 })
