@@ -139,6 +139,17 @@ class FakeDevice {
     pkt.writeUInt32BE(synCookie, 44)
     this.send(pkt)
   }
+
+  /** Send a raw SRT data packet (F=0, 16-byte header + payload) with sequence `seq`. */
+  sendSrtData(seq: number, payload: Buffer): void {
+    const pkt = Buffer.alloc(16 + payload.length)
+    pkt.writeUInt32BE(seq & 0x7fffffff, 0) // F=0 (data) + 31-bit sequence
+    pkt.writeUInt32BE(0, 4)                // message number / flags
+    pkt.writeUInt32BE(0, 8)                // timestamp
+    pkt.writeUInt32BE(DEVICE_SOCKET_ID, 12) // destination socket id
+    payload.copy(pkt, 16)
+    this.send(pkt)
+  }
 }
 
 // --- Packet analysis helpers ---
@@ -207,6 +218,15 @@ function srtShutdownIndex(packets: Buffer[]): number {
   )
 }
 
+/** ackSeq carried by the most recent SRT ACK (0x8002); ackSeq is at byte offset 16. */
+function latestAckSeq(packets: Buffer[]): number | null {
+  for (let i = packets.length - 1; i >= 0; i--) {
+    const p = packets[i]
+    if (p.length >= 20 && p.readUInt16BE(0) === 0x8002) return p.readUInt32BE(16)
+  }
+  return null
+}
+
 // --- Test config factory ---
 
 function makeConfig(fakePort: number): P2PSessionConfig {
@@ -225,7 +245,6 @@ function makeConfig(fakePort: number): P2PSessionConfig {
     clientId: 12345,
     channelNo: 1,
     streamType: 1,
-    streamTokens: ['token1', 'token2'],
     localPublicIp: '127.0.0.1',
     busType: 1,
   }
@@ -395,5 +414,57 @@ describe('P2PSession TEARDOWN on stop() — integration', () => {
 
     // Session is idle — no start(), no deviceSessionId, no socket
     await expect(session!.stop()).resolves.not.toThrow()
+  })
+})
+
+describe('P2PSession SRT ACK sequence isolation — integration', () => {
+  let device: FakeDevice
+  let session: P2PSession | null = null
+
+  beforeEach(async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    device = new FakeDevice()
+    await device.start()
+  })
+
+  afterEach(async () => {
+    try { await session?.stop() } catch { /* safe cleanup */ }
+    session = null
+    device.close()
+    vi.restoreAllMocks()
+  })
+
+  // The device multiplexes TWO SRT sub-sessions onto one UDP socket with
+  // INDEPENDENT sequence spaces: a control channel (0x807f keepalives, low seq)
+  // and the video data channel (0x80xx/0x0100 media, high seq). Our ACKs go to
+  // the data socket and MUST carry the data channel's sequence. If a control
+  // keepalive advances the ACK sequence, the device's SRT sender receives an
+  // out-of-range ACK and stalls its flow-control window — the verified cause of
+  // the intermittent "3-5 packets then silence" failure.
+  it('does not let a 0x807f control keepalive pollute the video ACK sequence', { timeout: 30_000 }, async () => {
+    session = new P2PSession(makeConfig(device.port))
+    const emitted: Buffer[] = []
+    session.on('data', (b: Buffer) => emitted.push(b))
+    await session.start()
+    expect(session.sessionState).toBe('streaming')
+
+    const VIDEO_SEQ = 1826555665   // data channel
+    const CONTROL_SEQ = 192006726  // control channel — a DIFFERENT seq space, far below
+
+    const videoPayload = Buffer.concat([Buffer.from([0x80, 0x60]), Buffer.alloc(40)])
+    const controlPayload = Buffer.concat([Buffer.from([0x80, 0x7f]), Buffer.alloc(40)])
+
+    // Video packet → ACK must advance to VIDEO_SEQ + 1
+    device.sendSrtData(VIDEO_SEQ, videoPayload)
+    await delay(60)
+    expect(latestAckSeq(device.received)).toBe((VIDEO_SEQ + 1) & 0x7fffffff)
+
+    // Control keepalive from the other session → ACK must STAY at the video seq
+    device.sendSrtData(CONTROL_SEQ, controlPayload)
+    await delay(60)
+    expect(latestAckSeq(device.received)).toBe((VIDEO_SEQ + 1) & 0x7fffffff)
+
+    // …and the control keepalive must never be forwarded as video payload
+    expect(emitted.some(b => b.length >= 2 && b.readUInt16BE(0) === 0x807f)).toBe(false)
   })
 })

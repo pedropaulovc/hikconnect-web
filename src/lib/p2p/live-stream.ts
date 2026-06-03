@@ -104,7 +104,6 @@ export class LiveStream extends EventEmitter {
         clientId: this.config.clientId,
         channelNo: this.config.channelNo,
         streamType: this.config.streamType,
-        streamTokens: [],
         localPublicIp: this.config.localPublicIp,
         busType: this.config.busType,
         startTime: this.config.startTime,

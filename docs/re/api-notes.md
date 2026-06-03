@@ -11,12 +11,28 @@ type: project
 - **Relay server:** 148.153.39.254:6123, EC P-256 public key (version 1)
 - Field names differ from decompiled Java code — always verify against real responses
 
-## P2P Config (NOT from REST API — injected from Android Java layer via JNI)
+## P2P Config — IS from REST API (corrected 2026-06-03)
+> Earlier note said "NOT from REST API — injected via JNI". That was wrong. The Java layer's
+> `setP2PV3ConfigInfo` is fed from a REST call:
+>
+> **`POST https://{apiDomain}/api/p2p/configurations`** (headers: `sessionId`, `clientType=55`,
+> `featureCode=deadbeef`) →
+> ```json
+> { "serverInfos":[{"ip":"52.5.124.127","port":6000},{"ip":"52.203.168.207","port":6000}],
+>   "ticket":null, "resultCode":"0",
+>   "secret":{ "version":1, "saltIndex":3, "expireTime":1781479369,
+>              "data":"[-21,54,6,-46,...]" } }   // 32 signed decimal bytes = P2PServerKey
+> ```
+> Decoded in `client.getP2PSecret()`. The server rotates among 8 salt-indexed keys; saltIndex
+> selects which. App caches it in MMKV with `expireTime` (jadx: `AccountHandler.getP2PConfigInfo`,
+> Retrofit `ConfigApi.getP2PConfigInfo` → `@POST("api/p2p/configurations")`).
+> This endpoint ALSO returns the P2P server list (`serverInfos`) — same as pagelist `P2P`.
+
 - CAS server: 34.194.209.167:6500 (TCP connects OK from WSL2)
 - STUN server: 43.130.155.63:6002 (times out with standard RFC 5389 — may be proprietary)
-- P2P server list: 2 servers (IPs not captured — need Frida hook on EZP2PServerInfo)
-- P2P link key: 32 bytes ASCII hex, version 101
-- All injected via `setP2PV3ConfigInfo`, `setP2PSelectInfo`, `setTokens` JNI calls
+- P2P server list: `serverInfos` from `/api/p2p/configurations`, or pagelist `P2P` filter
+- P2P link key: first 32 ASCII chars of pagelist KMS `secretKey`, version 101
+- userId: JWT `aud` claim of sessionId (`extractUserId`); clientId: random, not validated
 
 ## Protocol Architecture (from Ghidra RE, March 2026)
 - V3 binary protocol: 12-byte header (magic 0xE2), TLV attrs, CRC-8, optional AES-128-CBC

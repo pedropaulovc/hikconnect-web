@@ -2,9 +2,9 @@ import { NextResponse } from 'next/server'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { LiveStream } from '@/lib/p2p/live-stream'
-import { P2P_SERVER_KEY } from '@/lib/p2p/p2p-session'
 import { getAuthenticatedClient } from '@/lib/hikconnect/getClient'
 import { extractUserId } from '@/lib/hikconnect/client'
+import { randomClientId } from '@/lib/p2p/client-id'
 import { sessions, deviceLastStop, DEVICE_COOLDOWN_MS } from '../sessions'
 
 export async function POST(req: Request) {
@@ -39,24 +39,25 @@ export async function POST(req: Request) {
   const hlsDir = join(tmpdir(), 'hls', sessionId)
 
   try {
-    // Get P2P config from API
+    // Get P2P config + fresh server key from API (key rotates server-side — never hardcode)
     const client = getAuthenticatedClient()
     const p2pConfig = await client.getP2PConfig(deviceSerial)
+    const secret = await client.getP2PSecret()
 
     const p2pLinkKey = Buffer.from(p2pConfig.secretKey.substring(0, 32), 'ascii')
     const stream = new LiveStream({
       deviceSerial,
       deviceIp: p2pConfig.connection.netIp || p2pConfig.connection.wanIp,
-      devicePort: p2pConfig.connection.netStreamPort || 9020,
-      p2pServers: p2pConfig.servers.map(s => ({ host: s.ip, port: s.port })),
-      p2pKey: P2P_SERVER_KEY,
+      devicePort: p2pConfig.connection.netStreamPort,
+      p2pServers: secret.servers.map(s => ({ host: s.ip, port: s.port })),
+      p2pKey: secret.key,
       p2pLinkKey,
-      p2pKeyVersion: p2pConfig.keyVersion || 101,
-      p2pKeySaltIndex: 3,
-      p2pKeySaltVer: 1,
+      p2pKeyVersion: p2pConfig.keyVersion,
+      p2pKeySaltIndex: secret.saltIndex,
+      p2pKeySaltVer: secret.saltVer,
       sessionToken: client.getSession()!.sessionId,
       userId: extractUserId(client.getSession()!.sessionId),
-      clientId: 0x0aed13f5, // TODO: fetch from API
+      clientId: randomClientId(),
       channelNo: channel,
       streamType,
       // localPublicIp omitted — P2P server derives our NAT-mapped address from UDP source

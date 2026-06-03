@@ -146,6 +146,42 @@ export type P2PConfig = {
   }
 }
 
+/**
+ * Account-level P2P server key + salt, fetched fresh per session.
+ * Source: POST /api/p2p/configurations (official app's ConfigApi.getP2PConfigInfo).
+ * The key rotates server-side, so it MUST be fetched, never hardcoded.
+ */
+export type P2PSecret = {
+  /** 32-byte P2P server key, decoded from the "[b0,...,b31]" decimal-byte string. */
+  key: Buffer
+  /** Salt index paired with the key (0-7). */
+  saltIndex: number
+  /** Salt version (V3 flags). */
+  saltVer: number
+  /** Unix epoch (seconds) when this key expires server-side. */
+  expireTime: number
+  /** P2P server list returned alongside the secret. */
+  servers: P2PServer[]
+  /** Optional session ticket. */
+  ticket: string | null
+}
+
+/** POST /api/p2p/configurations — raw response (uses resultCode, not meta). */
+export type P2PConfigurationsResponse = {
+  serverInfos: P2PServer[]
+  expireTime: number | null
+  ticket: string | null
+  resultCode: string
+  resultDes: string
+  secret: {
+    version: number
+    saltIndex: number
+    expireTime: number
+    /** "[b0, b1, ..., b31]" signed decimal bytes. */
+    data: string
+  }
+}
+
 /** Raw KMS entry from pagelist */
 export type KmsEntry = {
   secretKey: string

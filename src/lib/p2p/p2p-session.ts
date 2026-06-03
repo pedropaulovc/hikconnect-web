@@ -11,16 +11,12 @@
 import { createSocket, type Socket as UdpSocket } from 'node:dgram'
 import { EventEmitter } from 'node:events'
 import { createCipheriv, randomUUID } from 'node:crypto'
-import { encodeV3Message, decodeV3Message, defaultMask, Opcode, crc8, type V3Message } from './v3-protocol'
+import { encodeV3Message, decodeV3Message, defaultMask, encodeMask, Opcode, crc8, type V3Message } from './v3-protocol'
 
-/**
- * P2P Server Key — outer encryption key for P2P server communication.
- * Stable per account, captured via Frida hook on Android app.
- * NOT the same as the API's KMS secretKey.
- */
-export const P2P_SERVER_KEY = Buffer.from(
-  'e4465f2d011ebf9d85eb32d46e1549bdf64c171d616a132afaba4b4d348a39d5', 'hex'
-)
+// P2P server key + salt are NOT hardcoded — they rotate server-side and MUST be
+// fetched fresh per session via client.getP2PSecret() (POST /api/p2p/configurations).
+// The server keeps 8 salt-indexed keys; the saltIndex we send tells it which to use.
+// See docs/re/2026-06-03-streaming-regression-investigation.md.
 
 // -- Config --
 
@@ -44,7 +40,6 @@ export type P2PSessionConfig = {
   clientId: number        // Client ID for expand header
   channelNo: number
   streamType: number      // 1=HD (main/4K), 2=SD (sub) — from Frida RE on Android app
-  streamTokens: string[]  // Stream auth tokens from /api/user/token/get
   localPublicIp?: string  // Public IP for P2P_SETUP registration
   busType?: number        // 1=live preview (default), 2=playback
   startTime?: string      // Playback start time (YYYY-MM-DDTHH:MM:SS)
@@ -399,7 +394,10 @@ export class P2PSession extends EventEmitter {
     // Build V3 header — NO expand header (expandHdr bit = 0)
     // P2P_SETUP uses seq=0 (from pcap capture)
     const seq = 0
-    const mask = 0xda // encrypt=1, saltVer=1, saltIdx=3, expandHdr=0, is2BLen=1
+    const mask = encodeMask({
+      encrypt: true, is2BLen: true, expandHeader: false,
+      saltVersion: this.config.p2pKeySaltVer, saltIndex: this.config.p2pKeySaltIndex,
+    })
     const header = Buffer.alloc(12)
     header[0] = 0xe2
     header[1] = mask
@@ -449,7 +447,10 @@ export class P2PSession extends EventEmitter {
 
     // Build outer V3 header
     const seq = ++this.seqNum
-    const mask = 0xda // encrypt=1, saltVer=1, saltIdx=3, expandHdr=0, is2BLen=1
+    const mask = encodeMask({
+      encrypt: true, is2BLen: true, expandHeader: false,
+      saltVersion: this.config.p2pKeySaltVer, saltIndex: this.config.p2pKeySaltIndex,
+    })
     const header = Buffer.alloc(12)
     header[0] = 0xe2
     header[1] = mask
@@ -532,7 +533,10 @@ export class P2PSession extends EventEmitter {
     const innerSeq = ++this.seqNum
     const innerHeader = Buffer.alloc(12)
     innerHeader[0] = 0xe2
-    innerHeader[1] = 0xde // encrypt=1, saltVer=1, saltIdx=3, expandHdr=1, is2BLen=1
+    innerHeader[1] = encodeMask({
+      encrypt: true, is2BLen: true, expandHeader: true,
+      saltVersion: this.config.p2pKeySaltVer, saltIndex: this.config.p2pKeySaltIndex,
+    })
     innerHeader.writeUInt16BE(opcode, 2)
     innerHeader.writeUInt32BE(innerSeq, 4)
     innerHeader.writeUInt16BE(0x6234, 8) // reserved
@@ -1044,14 +1048,30 @@ export class P2PSession extends EventEmitter {
     const seqNum = buf.readUInt32BE(0) & 0x7fffffff
     const payload = buf.subarray(16)
 
+    // The device multiplexes two SRT sub-sessions onto this one UDP socket, each
+    // with its OWN independent sequence space: a control channel carrying 0x807f
+    // keepalives (~1 every 3s) and the video data channel (0x80xx media + 0x0100/
+    // 0x0200 metadata). Our ACKs go to the data socket and must carry the data
+    // channel's sequence. A 0x807f keepalive's sequence belongs to the control
+    // space — letting it advance lastAckSeq makes us ACK the data session with an
+    // out-of-range sequence, which stalls the device's flow-control window. (When
+    // video is dense the next packet re-corrects it, masking the bug; when video
+    // is sparse or hasn't started, the device stalls — the intermittent failure.)
+    const innerType = payload.length >= 2 ? payload.readUInt16BE(0) : 0
+    const isControlKeepalive = innerType === 0x807f
+
     this.srtDataCount++
     this.srtTotalBytes += payload.length
 
     if (this.srtDataCount <= 5 || this.srtDataCount % 100 === 0) {
-      console.log(`[SRT-DATA] #${this.srtDataCount} seq=${seqNum} payload=${payload.length}B total=${this.srtTotalBytes}B first16=${payload.subarray(0, Math.min(16, payload.length)).toString('hex')}`)
+      console.log(`[SRT-DATA] #${this.srtDataCount} seq=${seqNum} ctrl=${isControlKeepalive} payload=${payload.length}B total=${this.srtTotalBytes}B first16=${payload.subarray(0, Math.min(16, payload.length)).toString('hex')}`)
     }
 
-    // Track highest received sequence for ACK timer
+    // Control keepalives belong to the other SRT session — they neither advance
+    // the video ACK sequence nor flow into the media pipeline.
+    if (isControlKeepalive) return
+
+    // Track highest received sequence for ACK timer (video channel only)
     this.lastAckSeq = seqNum
 
     // Start the ACK timer on first data packet

@@ -42,6 +42,14 @@ coverage/
 native/libs/*.so
 native/ghidra/
 
+# Proprietary RE binaries (APK/iVMS bundles) — never commit (large + copyrighted)
+native/packages/
+
+# Packet captures — may contain session tokens / IPs; large
+docs/re/captures/
+*.pcap
+*.xapk
+
 # Frida/ADB artifacts
 scripts/frida/screen.png
 scripts/frida/ui.xml

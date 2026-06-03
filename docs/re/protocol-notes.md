@@ -90,9 +90,19 @@ Outer V3 envelope (12B header + AES-CBC encrypted body):
 
 **Key insight about outer body tag=0x00:** The old "routing header" bytes `30387e000c07050e333637` were actually `tag=0x00 serial` XORed with the AES IV during decryption with wrong IV. The true plaintext is `00 09 4c333832333933363 37` = tag=0x00, len=9, "L38239367".
 
-**Error progression:** 0x101012 (wrong key) → 0x000003 (missing fields) → 0x101011 (wrong body) → 0x0c (expired session) → 0xcb (203, "Link status invalid" = missing P2P_SETUP) → SUCCESS
+**Error progression:** 0x101012 (stale/wrong P2PServerKey+salt — see below) → 0x000003 (missing fields) → 0x101011 (wrong body) → 0x0c (expired session) → 0xcb (203, "Link status invalid" = missing P2P_SETUP) → SUCCESS
 
-**Current status:** P2P_SETUP succeeds, device sends 0x0C00 PREVIEW_RSP packets. PLAY_REQUEST from separate socket still gets "Link status invalid" — need to figure out whether PLAY_REQUEST should go to device directly or requires different socket/timing.
+> **2026-06-03 — `0x101012` resolved & full pipeline working credentials-only.** `0x101012` IS
+> effectively a key/salt rejection. The P2PServerKey rotates server-side and must be fetched fresh
+> per session via `POST /api/p2p/configurations` (`client.getP2PSecret()`); the saltIndex we send
+> in the V3 mask byte selects which of the server's 8 keys to decrypt with. A stale key (or a salt
+> that doesn't match the key) → `0x101012`. A fresh matching (key, saltIndex, saltVer) → SUCCESS.
+> Live (HLS) + playback (MPEG-PS) both verified from username/password alone, no hardcoded keys.
+> Full writeup: `2026-06-03-streaming-regression-investigation.md`.
+
+**Current status (2026-06-03):** WORKING. P2P_SETUP succeeds, hole-punch completes, PLAY_REQUEST
+(direct + relay) yields video. Live = 4K HEVC HLS; playback = MPEG-PS → MP4. clientId is random
+(not validated). Intermittent ~50–80% (device session contention; mitigated by per-device cooldown).
 
 #### iVMS-4200 Ghidra RE Findings (2026-03-17)
 
@@ -279,6 +289,37 @@ The native code uses srt.dll with functions like `srt_setrecvavail`, `srt_sendms
 1. Use `node-srt` npm package (SRT bindings for Node.js)
 2. Use raw UDP and handle reliability ourselves (risky, may not work)
 3. Use the TRANSFOR_DATA relay path (P2P server relays, bypasses SRT)
+
+We took option 2 (raw UDP + a minimal SRT receiver in `p2p-session.ts`).
+
+##### Two SRT sub-sessions per stream — ACK isolation is mandatory (Critical Finding, 2026-06-03)
+
+The device opens **two SRT sub-sessions on the same UDP socket**, each with its **own
+independent SRT sequence space** and its own peer socket id (allocated consecutively, e.g.
+`0x..def` control / `0x..dee` data — the data session is the *second* induction, the lower id):
+
+- **Control sub-session** — `0x807F` keepalive frames, low sequence numbers, ~1 packet every 3 s.
+- **Data sub-session** — video (`0x8050/0x8060/0x0100/0x0200`), high sequence numbers, high rate.
+
+Both deliver as SRT data packets (16-byte SRT header + Hik-RTP payload) on the one socket, and a
+data packet's header carries only the *destination* (our) socket id — so the sub-session cannot
+be told apart from the SRT header alone; **discriminate by Hik-RTP payload type** (`0x807F` =
+control, else data).
+
+**The ACK rule:** SRT ACKs (`0x8002`) we send to the **data** socket must carry the **data**
+sub-session's sequence. The device's SRT sender uses ACKs for flow control: an ACK referencing a
+sequence it never sent on that session is out-of-range → it **stops advancing its window and
+stalls**. Because the two sessions share one socket, a naive receiver that tracks a single
+"last received sequence" across all packets will let a `0x807F` keepalive (control seq) pollute
+the data ACK and stall the stream. This is intermittent — dense video re-corrects the tracked
+sequence within ~10–50 ms (no visible stall), but a `0x807F` arriving before video starts or
+during a lull stalls it (full stall = ~0 video; partial stall = a burst then silence).
+
+**Implementation:** in `handleSrtDataPacket`, a `0x807F` control keepalive neither advances the
+video ACK sequence nor enters the media pipeline. The control sub-session needs **no** ACK from
+us (it keeps sending keepalives regardless). Verified credentials-only: 20/20 back-to-back live
+streams full-window, plus live + playback 4K. Full writeup:
+`docs/re/2026-06-03-streaming-regression-investigation.md` § "RESOLVED (2)".
 
 ##### Relay Client ECDH Requirement (Critical Finding)
 

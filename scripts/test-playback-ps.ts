@@ -16,12 +16,20 @@ for (const line of envFile.split('\n')) {
 }
 
 import { HikConnectClient, extractUserId } from '../src/lib/hikconnect/client'
-import { P2PSession, P2P_SERVER_KEY } from '../src/lib/p2p/p2p-session'
+import { P2PSession } from '../src/lib/p2p/p2p-session'
+import { randomClientId } from '../src/lib/p2p/client-id'
 import { spawn } from 'child_process'
 
-const DEVICE_SERIAL = 'L38239367'
+const DEVICE_SERIAL = process.env.HIKCONNECT_DEVICE_SERIAL || 'L38239367'
 const CHANNEL = 1
 const CAPTURE_DURATION_MS = 70_000
+
+/** Device-local timestamp ~1h ago, "YYYY-MM-DDTHH:MM:SS" from local clock components. */
+function defaultRecentStart(): string {
+  const d = new Date(Date.now() - 60 * 60 * 1000)
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+}
 
 async function main() {
   console.log('=== Playback Stream Test (MPEG-PS) ===\n')
@@ -35,7 +43,9 @@ async function main() {
 
   // Parse start time — NVR expects device-local time, NOT UTC.
   // Pass the string literally without Date conversion to avoid timezone shift.
-  const startTime = process.argv[2] || '2026-03-15T17:30:00'
+  // Default to ~1h ago (device clock ≈ wall clock); a fixed date eventually rotates
+  // off the NVR's storage and the playback returns nothing.
+  const startTime = process.argv[2] || defaultRecentStart()
   // Add 1 minute for stop time by simple string arithmetic
   const [datePart, timePart] = startTime.split('T')
   const [hh, mm, ss] = timePart.split(':').map(Number)
@@ -46,32 +56,27 @@ async function main() {
   const stopTime = `${datePart}T${stopH}:${stopM}:${stopS}`
   console.log(`Playback range: ${startTime} → ${stopTime}\n`)
 
-  // P2P config
+  // P2P config + fresh server key (rotates server-side — never hardcode)
   const p2p = await client.getP2PConfig(DEVICE_SERIAL)
   const p2pLinkKey = Buffer.from(p2p.secretKey.substring(0, 32), 'ascii')
-  const tokenResp = await fetch(`https://${session.apiDomain}/api/user/token/get`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: `sessionId=${encodeURIComponent(session.sessionId)}&clientType=55`,
-  })
-  const tokenData = await tokenResp.json() as { tokenArray?: string[] }
+  const secret = await client.getP2PSecret()
+  console.log('P2P key:', secret.key.toString('hex'), 'saltIndex', secret.saltIndex, 'ver', secret.saltVer)
 
   const p2pSession = new P2PSession({
     deviceSerial: DEVICE_SERIAL,
     devicePublicIp: p2p.connection.netIp || p2p.connection.wanIp,
-    devicePublicPort: p2p.connection.netStreamPort || 9020,
-    p2pServers: p2p.servers.map(s => ({ host: s.ip, port: s.port })),
-    p2pKey: P2P_SERVER_KEY,
+    devicePublicPort: p2p.connection.netStreamPort,
+    p2pServers: secret.servers.map(s => ({ host: s.ip, port: s.port })),
+    p2pKey: secret.key,
     p2pLinkKey,
-    p2pKeyVersion: p2p.keyVersion || 101,
-    p2pKeySaltIndex: 3,
-    p2pKeySaltVer: 1,
+    p2pKeyVersion: p2p.keyVersion,
+    p2pKeySaltIndex: secret.saltIndex,
+    p2pKeySaltVer: secret.saltVer,
     sessionToken: session.sessionId,
     userId: extractUserId(session.sessionId),
-    clientId: 0x0aed13f5,
+    clientId: randomClientId(),
     channelNo: CHANNEL,
     streamType: 0,
-    streamTokens: tokenData.tokenArray || [],
     localPublicIp: process.env.PUBLIC_IP, // optional — P2P server derives NAT address from UDP source
     busType: 2,
     startTime,
