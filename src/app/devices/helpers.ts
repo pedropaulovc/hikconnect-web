@@ -12,3 +12,8 @@ export function buildCameraLinks(serial: string, ch: number): { live: string; pl
 export function buildRecordingsUrl(serial: string, ch: number, date: string): string {
   return `/api/devices/${serial}/${ch}/recordings?startTime=${date}T00:00:00Z&stopTime=${date}T23:59:59Z`
 }
+
+export function buildAlarmsUrl(serial: string, ch: number, alarmStart: string, alarmEnd: string, offset: number): string {
+  const qs = new URLSearchParams({ alarmStart, alarmEnd, offset: String(offset) })
+  return `/api/devices/${serial}/${ch}/alarms?${qs.toString()}`
+}

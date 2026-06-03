@@ -3,6 +3,7 @@ import {
   isDeviceOnline,
   buildCameraLinks,
   buildRecordingsUrl,
+  buildAlarmsUrl,
 } from '../helpers'
 
 describe('Device page helpers', () => {
@@ -65,6 +66,17 @@ describe('Device page helpers', () => {
       const url = buildRecordingsUrl('X', 1, '2026-01-01')
       expect(url).toContain('startTime=2026-01-01T00:00:00Z')
       expect(url).toContain('stopTime=2026-01-01T23:59:59Z')
+    })
+  })
+
+  describe('buildAlarmsUrl', () => {
+    it('encodes serial, channel, time range, and offset', () => {
+      const url = buildAlarmsUrl('L38239367', 1, '2026-06-03 00:00:00', '2026-06-03 13:00:00', 50)
+      const parsed = new URL(url, 'http://x')
+      expect(parsed.pathname).toBe('/api/devices/L38239367/1/alarms')
+      expect(parsed.searchParams.get('alarmStart')).toBe('2026-06-03 00:00:00')
+      expect(parsed.searchParams.get('alarmEnd')).toBe('2026-06-03 13:00:00')
+      expect(parsed.searchParams.get('offset')).toBe('50')
     })
   })
 })
