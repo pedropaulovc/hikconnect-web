@@ -89,6 +89,7 @@ export default function ExportPanel({ serial, channel, defaultStart, defaultStop
       <div className={styles.range}>
         <input
           type="datetime-local"
+          step="1"
           value={start}
           onChange={e => setStart(e.target.value)}
           disabled={busy}
@@ -97,12 +98,13 @@ export default function ExportPanel({ serial, channel, defaultStart, defaultStop
         <span>→</span>
         <input
           type="datetime-local"
+          step="1"
           value={stop}
           onChange={e => setStop(e.target.value)}
           disabled={busy}
           className={styles.input}
         />
-        <button onClick={startExport} disabled={busy || !start || !stop} className={styles.button}>
+        <button onClick={startExport} disabled={busy || !start || !stop || start >= stop} className={styles.button}>
           {state === 'starting' ? 'Starting…' : state === 'exporting' ? 'Exporting…' : 'Export MP4'}
         </button>
       </div>
