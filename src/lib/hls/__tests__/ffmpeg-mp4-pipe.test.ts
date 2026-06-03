@@ -50,8 +50,11 @@ describe('buildMp4FfmpegArgs', () => {
 
   it('does NOT impose a synthetic framerate (MPEG-PS carries its own PTS)', () => {
     // Unlike the live raw-HEVC path, the PS container has timestamps — a
-    // forced -framerate would corrupt the output duration.
-    expect(buildMp4FfmpegArgs(OUT)).not.toContain('-framerate')
+    // forced framerate (either -framerate on input or -r on output) would
+    // corrupt the output duration.
+    const args = buildMp4FfmpegArgs(OUT)
+    expect(args).not.toContain('-framerate')
+    expect(args).not.toContain('-r')
   })
 
   it('drops audio and writes a faststart MP4 to the output path', () => {
@@ -106,6 +109,12 @@ describe('parseFfmpegProgressSeconds', () => {
     const line = 'size=512kB time=00:00:10.00 bitrate=99:99 dup=5 drop=0'
     expect(parseFfmpegProgressSeconds(line)).toBeCloseTo(10, 2)
   })
+
+  it('rejects a malformed time with single-digit fields (requires HH:MM:SS shape)', () => {
+    // ffmpeg always zero-pads MM and SS. A loose \d+:\d+:\d+ regex would wrongly
+    // accept this; the parser must demand the 2-digit minute/second shape.
+    expect(parseFfmpegProgressSeconds('time=1:2:3')).toBeNull()
+  })
 })
 
 describe('FfmpegMp4Pipe', () => {
@@ -139,5 +148,19 @@ describe('FfmpegMp4Pipe', () => {
     // With no ffmpeg spawned yet it must still resolve, not hang or throw.
     expect(typeof (ret as Promise<void>)?.then).toBe('function')
     return expect(ret).resolves.toBeUndefined()
+  })
+
+  it('stop() resolves promptly when ffmpeg was never spawned (empty range)', async () => {
+    // An empty/zero-byte range never fills the pre-buffer, so no ffmpeg runs.
+    // The watchdog will still call stop(); it must NOT hang waiting on a
+    // nonexistent process 'close' event. Guard with a real timeout race.
+    const pipe = new FfmpegMp4Pipe({ outputPath: '/tmp/export/empty-range.mp4' })
+    pipe.start()
+    const timedOut = Symbol('timeout')
+    const result = await Promise.race([
+      pipe.stop().then(() => 'resolved'),
+      new Promise((r) => setTimeout(() => r(timedOut), 1000)),
+    ])
+    expect(result).toBe('resolved')
   })
 })
