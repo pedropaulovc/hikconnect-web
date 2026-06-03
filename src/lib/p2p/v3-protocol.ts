@@ -129,7 +129,7 @@ export function crc8(data: Uint8Array): number {
 
 // --- Mask byte encode/decode ---
 
-function encodeMask(flags: V3MaskFlags): number {
+export function encodeMask(flags: V3MaskFlags): number {
   return (
     ((flags.encrypt ? 1 : 0) << 7) |
     ((flags.saltVersion & 1) << 6) |

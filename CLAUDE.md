@@ -8,14 +8,16 @@ Web client for Hikvision NVRs/cameras that streams video via the Hik-Connect clo
 
 **Phase 2 (protocol reverse engineering):** Complete. Full P2P streaming pipeline reverse-engineered from iVMS-4200 (Ghidra) and verified on VPS. P2P_SETUP → hole-punch → SRT → H.265 video data flowing.
 
-**Phase 3 (streaming + UI):** Complete. Live preview and playback both produce verified 4K video.
-- **Live preview** (busType=1): Hik-RTP framing → H.265 NAL extraction → FFmpeg HLS. Verified 87s footage from pcap.
-- **Playback** (busType=2): MPEG-PS container over Hik-RTP → FFmpeg demux. Verified 64s of recorded footage from 2026-03-15.
+**Phase 3 (streaming + UI):** Complete. Live preview and playback both produce verified 4K video, **credentials-only (no hardcoded keys/codes) and reliably** (20/20 back-to-back).
+- **Live preview** (busType=1): Hik-RTP framing → H.265 NAL extraction → FFmpeg HLS. Verified sustained 4K HEVC.
+- **Playback** (busType=2): MPEG-PS container over Hik-RTP → FFmpeg demux. Verified 8.4MB recent-recording playback (NVR retention rotates old recordings off — query a recent time).
 
 **Key discovery:** Playback streams use MPEG Program Stream (PS) container, NOT raw H.265 NALs like live preview. The NVR stores recordings as PS files and streams them as-is. Strip 12-byte Hik-RTP headers from 0x8050 packets and pipe to FFmpeg as `-f mpeg`.
 
+**Reliability fix (2026-06-03):** The intermittent "reaches streaming but ~0 video / stalls after a burst" failure was an SRT ACK bug, NOT device contention. The device runs two SRT sub-sessions (control `0x807f` keepalives + video) with independent sequence spaces on one socket; a single shared `lastAckSeq` let control sequences pollute the video ACK → device flow-control stalled. Fixed in `handleSrtDataPacket` by routing on payload type. See `docs/re/2026-06-03-streaming-regression-investigation.md`.
+
 **Next steps:**
-1. Production hardening: session management, error recovery, multi-channel
+1. Production hardening: error recovery, multi-channel
 2. Browser playback UI: timeline scrubber, recording list, camera selector
 3. Playback HLS integration: pipe PS→FFmpeg→HLS for browser playback
 
@@ -101,11 +103,16 @@ npm test -- --run    # Run all tests (98 pass, 1 skipped)
 
 No VPS required — P2P server derives our NAT-mapped address from UDP packet source. Works behind home/office NAT.
 
+All scripts fetch the P2P server key + salt fresh via `client.getP2PSecret()` — no keys are
+hardcoded. Live + playback verified credentials-only (2026-06-03).
+
 ```bash
+npx tsx scripts/probe-p2p-config.ts     # Fetch + decode the P2P server key from /api/p2p/configurations
 npx tsx scripts/test-p2p-dynamic.ts     # Full P2P test: login → P2P_SETUP → PLAY_REQUEST
 npx tsx scripts/test-p2p-to-ffmpeg.ts   # Live stream → H.265 → FFmpeg → HLS
-npx tsx scripts/test-playback-ps.ts     # Playback → MPEG-PS → FFmpeg → MP4
-npx tsx scripts/test-p2p-v2.ts          # Legacy P2P server handshake test
+npx tsx scripts/test-playback-ps.ts [t] # Playback (t=YYYY-MM-DDTHH:MM:SS) → MPEG-PS → FFmpeg → MP4
+npx tsx scripts/probe-recordings.ts [d] # List recordings (d=YYYY-MM-DD)
+npx tsx scripts/diag-stream-reliability.ts [n] [cooldownSec]  # Stream reliability + clientId diagnostic
 npx tsx scripts/test-vtm-connect.ts     # Test VTM relay connection
 ```
 
@@ -176,12 +183,19 @@ All protocol documentation lives in `docs/re/`:
 
 ### Key Protocol Constants
 
-- **P2PServerKey:** `e4465f2d011ebf9d85eb32d46e1549bdf64c171d616a132afaba4b4d348a39d5` (stable per account, from Frida)
-- **P2PLinkKey:** first 32 ASCII chars of API KMS `secretKey` (from Frida `szP2PLinkKey`)
+- **P2PServerKey:** fetched fresh per session — `POST /api/p2p/configurations` → `secret.data`
+  (`"[b0,…,b31]"` decimal bytes) + `secret.saltIndex` (0–7) + `secret.version` (saltVer).
+  NEVER hardcode: the server holds 8 salt-indexed keys and returns one per call; the saltIndex
+  we send tells it which to decrypt with. `client.getP2PSecret()`. This endpoint also returns
+  the P2P server list. (Was the streaming-regression root cause — see
+  `docs/re/2026-06-03-streaming-regression-investigation.md`.)
+- **clientId** (PLAY_REQUEST expand-header tag 0x02): NOT validated — a client-side correlation
+  id. Generated random per session via `randomClientId()` (`src/lib/p2p/client-id.ts`).
+- **userId:** derived from the JWT `sessionId` `aud` claim via `extractUserId()`.
+- **P2PLinkKey:** first 32 ASCII chars of API KMS `secretKey` (inner PLAY_REQUEST encryption).
 - **AES IV (all V3 encryption):** `"01234567" + 8 zero bytes` (0x30313233343536370000000000000000)
 - **CRC-8:** Custom Hikvision bitwise algorithm (NOT polynomial 0x39). See `v3-protocol.ts`.
 - **V3 reserved field:** `0x6234` (protocol version constant in all V3 headers)
-- **P2P servers:** `52.5.124.127:6000`, `52.203.168.207:6000`
 - **VTM server:** `148.153.53.29:8554` (vtmvirginia.ezvizlife.com)
 - **Stream tokens:** `POST /api/user/token/get` with `sessionId` + `clientType=55`
 

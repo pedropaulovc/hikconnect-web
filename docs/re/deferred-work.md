@@ -36,12 +36,20 @@ type: project
 
 ### Remaining — Production Readiness
 
-13. **SRT session management** — Device limits concurrent P2P streams. After ~20 rapid reconnections, needs hours of cooldown. Need:
-    - Clean SRT shutdown on stop() (partially implemented with type=5 packet)
-    - P2P TEARDOWN (0x0C04) to explicitly release server-side session
-    - Possibly add session timeout/retry logic
+13. **~~SRT session management / "needs hours of cooldown"~~** — DISPROVEN (2026-06-03). With
+    the official app force-stopped, **20/20 back-to-back reconnects at zero cooldown** stream the
+    full window. There is no rapid-reconnect cooldown limit; the apparent "contention" was the
+    ACK-pollution bug in #14. `stop()` already sends SRT shutdown (type=5) + P2P TEARDOWN
+    (0x0C04) with retries. No session-cooldown logic needed.
 
-14. **SRT ACK refinement** — Current 10ms ACK timer works for initial burst but flow may stall. The device's SRT implementation expects specific ACK format matching Hikvision's modified SRT. Consider using `@eyevinn/srt` native bindings for production reliability.
+14. **~~SRT ACK refinement / flow stalls~~** — RESOLVED (2026-06-03). Root cause: the device
+    multiplexes two SRT sub-sessions (control `0x807f` keepalives + video) with independent
+    sequence spaces onto one socket, and `handleSrtDataPacket` fed a single shared `lastAckSeq`
+    from both → control-channel sequences leaked into the data-session ACK → device's flow-control
+    window stalled (intermittent, masked when video was dense). Fix: route by payload type so
+    `0x807f` keepalives neither advance the video ACK nor enter the media pipeline. Verified 20/20
+    full-window streams + live/playback 4K. No native `@eyevinn/srt` bindings needed. See
+    `docs/re/2026-06-03-streaming-regression-investigation.md` § "RESOLVED (2)".
 
 ### Remaining — ECDH for Relay/VTM
 
@@ -51,8 +59,13 @@ type: project
 
 ### Remaining — Integration
 
-16. **userId extraction** — Currently empty string. Should decode from session JWT `aud` claim.
-17. **clientId from API** — Currently using captured value 0x0aed13f5. Should fetch from `/api/sdk/p2p/user/info/get` or equivalent.
+16. **~~userId extraction~~** — ✓ DONE. `extractUserId()` decodes the session JWT `aud` claim.
+17. **~~clientId from API~~** — ✓ RESOLVED (2026-06-03). clientId is NOT validated server-side
+    (verified: random values stream fine). Generated random per session via `randomClientId()`.
+    No API fetch needed.
+17b. **~~P2PServerKey + salt source~~** — ✓ RESOLVED (2026-06-03). Fetched fresh per session from
+    `POST /api/p2p/configurations` (`client.getP2PSecret()`). Rotates server-side (8 salt-indexed
+    keys). Was the streaming-regression root cause (`0x101012`). No hardcoded keys remain.
 18. **Stream token integration** — 20 tokens from `/api/user/token/get` are fetched but not used in PLAY_REQUEST.
 19. **Multi-channel support** — Current code assumes channel 1. Need channel selection in UI.
 

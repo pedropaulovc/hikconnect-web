@@ -6,6 +6,7 @@ import type {
   StreamTicketResponse, VtmInfoResponse, RelayServerResponse, RecordListResponse,
   VtmInfo, StreamServerConfig, RecordFile,
   P2PDeviceListResponse, P2PConfig,
+  P2PSecret, P2PConfigurationsResponse,
 } from './types'
 
 export type ClientOptions = {
@@ -202,10 +203,15 @@ export class HikConnectClient {
       throw new Error(`No CONNECTION entry found for device ${deviceSerial}`)
     }
 
+    const keyVersion = Number(kms.version)
+    if (!Number.isFinite(keyVersion)) {
+      throw new Error(`Invalid P2P key version for device ${deviceSerial}: ${kms.version}`)
+    }
+
     return {
       servers,
       secretKey: kms.secretKey,
-      keyVersion: Number(kms.version),
+      keyVersion,
       connection: {
         localIp: conn.localIp,
         netIp: conn.netIp,
@@ -215,6 +221,41 @@ export class HikConnectClient {
         netStreamPort: conn.netStreamPort,
         wanIp: conn.wanIp,
       },
+    }
+  }
+
+  /**
+   * Fetch the account-level P2P server key + salt, fresh from the cloud.
+   * Mirrors the official app's ConfigApi.getP2PConfigInfo (POST /api/p2p/configurations).
+   * The key rotates server-side; always fetch per session rather than hardcoding.
+   */
+  async getP2PSecret(): Promise<P2PSecret> {
+    if (!this.session) throw new Error('Not authenticated')
+
+    const resp = await this.fetchFn(this.url('/api/p2p/configurations'), {
+      method: 'POST',
+      headers: this.headers(),
+    })
+    const data = (await resp.json()) as P2PConfigurationsResponse
+    if (data.resultCode !== '0' || !data.secret?.data) {
+      throw new Error(`getP2PSecret failed: resultCode=${data.resultCode} ${data.resultDes ?? ''}`)
+    }
+
+    const bytes = data.secret.data
+      .replace(/^\[|\]$/g, '')
+      .split(',')
+      .map(s => parseInt(s.trim(), 10) & 0xff)
+    if (bytes.length !== 32) {
+      throw new Error(`Expected 32-byte P2P key, got ${bytes.length}`)
+    }
+
+    return {
+      key: Buffer.from(bytes),
+      saltIndex: data.secret.saltIndex,
+      saltVer: data.secret.version,
+      expireTime: data.secret.expireTime,
+      servers: data.serverInfos ?? [],
+      ticket: data.ticket,
     }
   }
 }
