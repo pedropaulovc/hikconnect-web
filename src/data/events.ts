@@ -1,0 +1,98 @@
+import type { DetectionEvent } from './types';
+
+const thumb = (id: string) => `https://picsum.photos/seed/${id}/320/180`;
+
+export const events: DetectionEvent[] = [
+  {
+    id: 'evt-001',
+    cameraId: 'front-door',
+    type: 'person',
+    timestamp: '2026-06-03T08:12:04',
+    thumbnailUrl: thumb('evt-001'),
+    recordingId: 'rec-001',
+  },
+  {
+    id: 'evt-002',
+    cameraId: 'front-door',
+    type: 'motion',
+    timestamp: '2026-06-03T07:45:00',
+    thumbnailUrl: thumb('evt-002'),
+    recordingId: 'rec-002',
+  },
+  {
+    id: 'evt-003',
+    cameraId: 'front-door',
+    type: 'vehicle',
+    timestamp: '2026-06-02T11:20:00',
+    thumbnailUrl: thumb('evt-003'),
+    recordingId: 'rec-008',
+  },
+  {
+    id: 'evt-004',
+    cameraId: 'lobby',
+    type: 'person',
+    timestamp: '2026-06-03T09:01:22',
+    thumbnailUrl: thumb('evt-004'),
+    recordingId: 'rec-003',
+  },
+  {
+    id: 'evt-005',
+    cameraId: 'lobby',
+    type: 'motion',
+    timestamp: '2026-06-02T14:05:30',
+    thumbnailUrl: thumb('evt-005'),
+    recordingId: 'rec-007',
+  },
+  {
+    id: 'evt-006',
+    cameraId: 'parking-lot',
+    type: 'vehicle',
+    timestamp: '2026-06-03T06:30:10',
+    thumbnailUrl: thumb('evt-006'),
+    recordingId: 'rec-004',
+  },
+  {
+    id: 'evt-007',
+    cameraId: 'parking-lot',
+    type: 'vehicle',
+    timestamp: '2026-06-02T22:14:55',
+    thumbnailUrl: thumb('evt-007'),
+    recordingId: 'rec-005',
+  },
+  {
+    id: 'evt-008',
+    cameraId: 'parking-lot',
+    type: 'animal',
+    timestamp: '2026-06-02T21:03:18',
+    thumbnailUrl: thumb('evt-008'),
+  },
+  {
+    id: 'evt-009',
+    cameraId: 'backyard',
+    type: 'animal',
+    timestamp: '2026-06-02T19:48:00',
+    thumbnailUrl: thumb('evt-009'),
+    recordingId: 'rec-006',
+  },
+  {
+    id: 'evt-010',
+    cameraId: 'backyard',
+    type: 'motion',
+    timestamp: '2026-06-02T18:22:41',
+    thumbnailUrl: thumb('evt-010'),
+  },
+  {
+    id: 'evt-011',
+    cameraId: 'lobby',
+    type: 'person',
+    timestamp: '2026-06-03T10:15:09',
+    thumbnailUrl: thumb('evt-011'),
+  },
+  {
+    id: 'evt-012',
+    cameraId: 'front-door',
+    type: 'person',
+    timestamp: '2026-06-03T10:42:55',
+    thumbnailUrl: thumb('evt-012'),
+  },
+];
