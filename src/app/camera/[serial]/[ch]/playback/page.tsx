@@ -5,8 +5,10 @@ import NavHeader from '@/components/NavHeader'
 import VideoPlayer from '@/components/VideoPlayer'
 import TimelineBar from '@/components/TimelineBar'
 import type { Recording } from '@/components/TimelineBar'
-import type { PlaybackState } from '@/app/camera/stream-states'
-import { buildRecordingsUrl } from '@/app/devices/helpers'
+import type { PlaybackState, AlarmPanelState } from '@/app/camera/stream-states'
+import { buildRecordingsUrl, buildAlarmsUrl } from '@/app/devices/helpers'
+import { datetimeLocalToServer, defaultAlarmRange, eventToPlaybackWindow } from '@/app/camera/alarm-helpers'
+import type { AlarmEvent } from '@/lib/hikconnect/types'
 import styles from './page.module.css'
 
 export default function PlaybackPage({ params }: { params: Promise<{ serial: string; ch: string }> }) {
@@ -19,6 +21,11 @@ export default function PlaybackPage({ params }: { params: Promise<{ serial: str
   const [activeRecording, setActiveRecording] = useState<Recording | null>(null)
   const [error, setError] = useState('')
   const [hasLoaded, setHasLoaded] = useState(false)
+  const [range, setRange] = useState(() => defaultAlarmRange(new Date()))
+  const [events, setEvents] = useState<AlarmEvent[]>([])
+  const [alarmState, setAlarmState] = useState<AlarmPanelState>('idle')
+  const [nextOffset, setNextOffset] = useState(0)
+  const [hasMore, setHasMore] = useState(false)
 
   const loadRecordings = async () => {
     if (!date) return
@@ -77,6 +84,31 @@ export default function PlaybackPage({ params }: { params: Promise<{ serial: str
     setSessionId(data.sessionId)
     setPlaylistUrl(data.playlistUrl)
     setState('playing')
+  }
+
+  const loadEvents = async (offset: number, append: boolean) => {
+    setAlarmState('loading')
+    try {
+      const url = buildAlarmsUrl(
+        serial, Number(ch),
+        datetimeLocalToServer(range.from), datetimeLocalToServer(range.to),
+        offset,
+      )
+      const res = await fetch(url)
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error)
+      setEvents(prev => append ? [...prev, ...data.events] : data.events)
+      setNextOffset(data.nextOffset)
+      setHasMore(data.hasMore)
+      setAlarmState('loaded')
+    } catch {
+      setAlarmState('error')
+    }
+  }
+
+  const playEvent = (event: AlarmEvent) => {
+    const window = eventToPlaybackWindow(event)
+    playRecording({ begin: window.begin, end: window.end })
   }
 
   return (
@@ -144,6 +176,49 @@ export default function PlaybackPage({ params }: { params: Promise<{ serial: str
         )}
 
         {error && <p className={styles.error}>{error}</p>}
+
+        <div className={styles.eventsPanel}>
+          <h3 className={styles.eventsTitle}>Events</h3>
+          <div className={styles.eventsRange}>
+            <input type="datetime-local" value={range.from}
+              onChange={e => setRange(r => ({ ...r, from: e.target.value }))} className={styles.dateInput} />
+            <span>→</span>
+            <input type="datetime-local" value={range.to}
+              onChange={e => setRange(r => ({ ...r, to: e.target.value }))} className={styles.dateInput} />
+            <button onClick={() => loadEvents(0, false)} disabled={alarmState === 'loading'} className={styles.loadButton}>
+              {alarmState === 'loading' ? 'Loading...' : 'Load Events'}
+            </button>
+          </div>
+
+          {alarmState === 'error' && <p className={styles.error}>Failed to load events</p>}
+          {alarmState === 'loaded' && events.length === 0 && <p className={styles.noRecordings}>No events in range</p>}
+
+          <div className={styles.eventsList}>
+            {events.map(ev => (
+              <div key={ev.alarmId} className={styles.eventItem} onClick={() => playEvent(ev)}>
+                {ev.isEncrypt === 0 && ev.picUrl
+                  ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={ev.picUrl} alt="" className={styles.eventThumb} loading="lazy" />
+                  )
+                  : <div className={styles.eventThumbPlaceholder} />}
+                <div className={styles.eventMeta}>
+                  <span className={styles.eventName}>
+                    {ev.isCheck === 0 && <span className={styles.unreadDot} />}
+                    {ev.alarmMessage}
+                  </span>
+                  <span className={styles.eventTime}>{ev.alarmStartTimeStr}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {hasMore && (
+            <button onClick={() => loadEvents(nextOffset, true)} disabled={alarmState === 'loading'} className={styles.loadButton}>
+              {alarmState === 'loading' ? 'Loading...' : 'Load More'}
+            </button>
+          )}
+        </div>
       </div>
     </>
   )
