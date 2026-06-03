@@ -4,7 +4,7 @@
  * times as device wall-clock, so round-tripping through datetime-local must
  * preserve the literal components regardless of the runner's timezone.
  */
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, afterAll } from 'vitest'
 import { serverToDatetimeLocal, datetimeLocalToPlayback } from '../export-ui-helpers'
 
 describe('serverToDatetimeLocal', () => {
@@ -52,5 +52,36 @@ describe('round-trip is timezone-stable', () => {
     const server = '2026-06-03T14:05:00Z'
     const back = datetimeLocalToPlayback(serverToDatetimeLocal(server))
     expect(back).toBe('2026-06-03T14:05:00')
+  })
+
+  it('does not drift under a non-UTC process timezone (America/Sao_Paulo, UTC-3)', () => {
+    // These helpers must treat the string literally and never route through
+    // new Date()/Date.parse(); under a -03:00 zone a Date-based impl would shift
+    // the displayed/exported hour. Force the zone and assert zero drift.
+    const prevTz = process.env.TZ
+    process.env.TZ = 'America/Sao_Paulo'
+    try {
+      // A value that straddles the date line under a -03:00 offset would be the
+      // worst case for a Date-based impl (00:30 → previous day 21:30).
+      expect(serverToDatetimeLocal('2026-06-03T00:30:00Z')).toBe('2026-06-03T00:30')
+      expect(datetimeLocalToPlayback('2026-06-03T00:30')).toBe('2026-06-03T00:30:00')
+      // Full round-trip preserves the exact wall-clock components.
+      const back = datetimeLocalToPlayback(serverToDatetimeLocal('2026-06-03T00:30:00Z'))
+      expect(back).toBe('2026-06-03T00:30:00')
+    } finally {
+      if (prevTz === undefined) delete process.env.TZ
+      else process.env.TZ = prevTz
+    }
+  })
+
+  it('preserves edited seconds end-to-end (user adjusts to a second boundary)', () => {
+    // serverToDatetimeLocal drops to minutes for the input; if the user then types
+    // a seconds-bearing value, datetimeLocalToPlayback must keep those seconds.
+    expect(datetimeLocalToPlayback('2026-06-03T14:05:42')).toBe('2026-06-03T14:05:42')
+  })
+
+  afterAll(() => {
+    // Belt-and-suspenders: ensure no TZ leakage to sibling test files.
+    delete process.env.TZ
   })
 })
