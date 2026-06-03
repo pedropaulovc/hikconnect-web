@@ -17,7 +17,7 @@
     "prepare": "node -e \"process.env.MSYS_NO_PATHCONV='1';import('husky').then(m=>process.stdout.write(m.default()))\" --input-type=module"
   },
   "dependencies": {
-    "hls.js": "^1.6.15",
+    "hls.js": "^1.6.16",
     "next": "16.1.6",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
@@ -32,11 +32,11 @@
     "@types/react": "^19.2.16",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react-swc": "^4.3.1",
-    "@vitest/coverage-v8": "^4.0.18",
+    "@vitest/coverage-v8": "^4.1.8",
     "cross-env": "^10.1.0",
     "eslint": "^9.32.0",
     "eslint-config-next": "16.2.7",
-    "eslint-plugin-playwright": "^2.9.0",
+    "eslint-plugin-playwright": "^2.10.4",
     "eslint-plugin-react-refresh": "^0.5.2",
     "husky": "^9.1.7",
     "jsdom": "^29.1.1",
