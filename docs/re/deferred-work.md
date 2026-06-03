@@ -51,6 +51,15 @@ type: project
     full-window streams + live/playback 4K. No native `@eyevinn/srt` bindings needed. See
     `docs/re/2026-06-03-streaming-regression-investigation.md` § "RESOLVED (2)".
 
+15. **~~SRT receive reordering / intermittent video corruption~~** — RESOLVED (2026-06-03).
+    Surfaced by the first web-UI demo: ~1.4% of video packets arrive out of order (pure
+    reordering, no loss — `scripts/diag-srt-reorder.ts`), and `handleSrtDataPacket` emitted in
+    arrival order. Hik-RTP has no usable seq field (RTP seq always `0`), so FU reassembly relies
+    on SRT in-order delivery → a swapped packet corrupts a fragmented NAL → frame decodes
+    top-left then grays until the next IDR. Fix: SRT receive reorder buffer (`deliverInOrder`),
+    with a 100ms/64-ahead flush so genuine loss never stalls. Verified 16/16 clean frames over
+    ~60s. See `docs/re/2026-06-03-streaming-regression-investigation.md` § "RESOLVED (3)".
+
 ### Remaining — ECDH for Relay/VTM
 
 15. **ECDH custom KDF** — Relay and VTM paths need ECDH P-256 handshake. The packet structure works (relay accepts, returns response) but the KDF uses a custom Matyas-Meyer-Oseas hash + SHA-256 DRBG (confirmed from ecdhCryption.dll RE). Relay returns error 0x2715.

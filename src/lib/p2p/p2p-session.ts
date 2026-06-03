@@ -155,6 +155,11 @@ export class P2PSession extends EventEmitter {
     if (this.state === 'stopped') return
 
     this.stopSrtAckTimer()
+    if (this.srtReorderTimer) {
+      clearTimeout(this.srtReorderTimer)
+      this.srtReorderTimer = null
+    }
+    this.srtReorderBuf.clear()
     if (this.keepaliveInterval) {
       clearInterval(this.keepaliveInterval)
       this.keepaliveInterval = null
@@ -1017,6 +1022,26 @@ export class P2PSession extends EventEmitter {
   private srtDataCount = 0
   private srtTotalBytes = 0
 
+  // Arrival-order reorder/loss telemetry for the video (data) SRT sub-session.
+  // We deliver packets in arrival order with no reorder buffer, so any backward
+  // step here means out-of-order delivery is reaching the NAL reassembler.
+  private srtSeqLast = -1
+  private srtReorderEvents = 0   // arrivals with seq < expected (definitive reorder)
+  private srtGapEvents = 0       // forward jumps (seq > prev+1): missing-at-the-moment
+  private srtMaxBackward = 0
+
+  // SRT receive reorder buffer. UDP delivers ~1.4% of video packets out of order;
+  // Hik-RTP carries no per-packet sequence, so FU reassembly relies on in-order
+  // delivery. We buffer packets that arrive ahead of the next expected sequence
+  // and release them in order. Pure reordering closes the gap within a few ms; a
+  // genuinely lost packet is given up on after SRT_REORDER_FLUSH_MS / once the
+  // buffer runs too far ahead, so the stream never stalls.
+  private srtDeliverSeq = -1               // next SRT seq to hand to consumers
+  private srtReorderBuf = new Map<number, Buffer>()
+  private srtReorderTimer: ReturnType<typeof setTimeout> | null = null
+  private static readonly SRT_REORDER_FLUSH_MS = 100
+  private static readonly SRT_REORDER_MAX_AHEAD = 64 // give up on the gap past this
+
   private lastAckSeq = 0
   private srtAckInterval: ReturnType<typeof setInterval> | null = null
   private srtAckNumber = 1
@@ -1071,14 +1096,96 @@ export class P2PSession extends EventEmitter {
     // the video ACK sequence nor flow into the media pipeline.
     if (isControlKeepalive) return
 
+    // Arrival-order reorder/loss telemetry (31-bit SRT seq space, wrap-aware diff)
+    if (this.srtSeqLast >= 0) {
+      let d = (seqNum - this.srtSeqLast) & 0x7fffffff
+      if (d > 0x40000000) d -= 0x80000000
+      if (d > 1) this.srtGapEvents++
+      else if (d <= 0) {
+        this.srtReorderEvents++
+        if (-d > this.srtMaxBackward) this.srtMaxBackward = -d
+      }
+    }
+    if (this.srtSeqLast < 0 || ((seqNum - this.srtSeqLast) & 0x7fffffff) < 0x40000000) {
+      this.srtSeqLast = seqNum
+    }
+
     // Track highest received sequence for ACK timer (video channel only)
     this.lastAckSeq = seqNum
 
     // Start the ACK timer on first data packet
     this.startSrtAckTimer()
 
-    // Emit the payload for processing
-    this.emit('data', payload)
+    // Re-sequence before handing to the NAL reassembler (see srtReorderBuf docs)
+    this.deliverInOrder(seqNum, payload)
+  }
+
+  /** Wrap-aware signed distance of `seq` ahead of the next-expected delivery seq. */
+  private srtAhead(seq: number): number {
+    let d = (seq - this.srtDeliverSeq) & 0x7fffffff
+    if (d > 0x40000000) d -= 0x80000000
+    return d
+  }
+
+  /** Emit data payloads strictly in SRT sequence order, buffering out-of-order ones. */
+  private deliverInOrder(seq: number, payload: Buffer): void {
+    if (this.srtDeliverSeq < 0) this.srtDeliverSeq = seq // baseline from first packet
+
+    const ahead = this.srtAhead(seq)
+
+    if (ahead < 0) return // late duplicate of an already-delivered seq — drop
+
+    if (ahead === 0) {
+      this.emit('data', payload)
+      this.srtDeliverSeq = (this.srtDeliverSeq + 1) & 0x7fffffff
+      this.drainReorderBuf()
+      return
+    }
+
+    // Ahead of expected — a packet is missing. Buffer and wait for it to arrive.
+    this.srtReorderBuf.set(seq, payload)
+    if (ahead > P2PSession.SRT_REORDER_MAX_AHEAD) {
+      // Too far ahead to be reordering — treat the gap as loss and move on now.
+      this.advancePastGap()
+      return
+    }
+    this.scheduleReorderFlush()
+  }
+
+  /** Release any buffered packets that are now contiguous with srtDeliverSeq. */
+  private drainReorderBuf(): void {
+    while (this.srtReorderBuf.has(this.srtDeliverSeq)) {
+      const p = this.srtReorderBuf.get(this.srtDeliverSeq)!
+      this.srtReorderBuf.delete(this.srtDeliverSeq)
+      this.emit('data', p)
+      this.srtDeliverSeq = (this.srtDeliverSeq + 1) & 0x7fffffff
+    }
+    if (this.srtReorderBuf.size === 0 && this.srtReorderTimer) {
+      clearTimeout(this.srtReorderTimer)
+      this.srtReorderTimer = null
+    }
+  }
+
+  /** Give up on the missing sequence: jump to the lowest buffered seq and drain. */
+  private advancePastGap(): void {
+    let lowest = -1
+    let lowestAhead = Infinity
+    for (const s of this.srtReorderBuf.keys()) {
+      const a = this.srtAhead(s)
+      if (a >= 0 && a < lowestAhead) { lowestAhead = a; lowest = s }
+    }
+    if (lowest < 0) return
+    this.srtDeliverSeq = lowest
+    this.drainReorderBuf()
+    if (this.srtReorderBuf.size > 0) this.scheduleReorderFlush() // another gap remains
+  }
+
+  private scheduleReorderFlush(): void {
+    if (this.srtReorderTimer) return
+    this.srtReorderTimer = setTimeout(() => {
+      this.srtReorderTimer = null
+      if (this.srtReorderBuf.size > 0) this.advancePastGap()
+    }, P2PSession.SRT_REORDER_FLUSH_MS)
   }
 
   private sendSrtAck(lastRecvSeq: number): void {

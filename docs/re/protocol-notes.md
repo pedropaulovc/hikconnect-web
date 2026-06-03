@@ -321,6 +321,36 @@ us (it keeps sending keepalives regardless). Verified credentials-only: 20/20 ba
 streams full-window, plus live + playback 4K. Full writeup:
 `docs/re/2026-06-03-streaming-regression-investigation.md` § "RESOLVED (2)".
 
+##### SRT receive reordering — a reorder buffer is mandatory (Critical Finding, 2026-06-03)
+
+ACK isolation fixed flow-control *stalls*; it did **not** address packet *ordering*. The P2P
+UDP path reorders **~1.4 % of video packets** (measured: `scripts/diag-srt-reorder.ts`). It is
+**pure reordering, not loss** — over a 20 s run, forward-gap events exactly equalled backward
+(out-of-order) arrivals (46 == 46), max backward jump 2: every momentary gap is filled by a
+late arrival a few ms later. So **no NAK/retransmit is needed** — but in-order delivery is.
+
+Why it corrupts video: **Hik-RTP carries no usable per-packet sequence** — the RTP sequence
+field (payload bytes 2–3) is always `0x0000` (confirmed: `first16=8060 0000 0000 0001 …`). So
+the NAL/FU reassembler (`HikRtpExtractor`) has nothing to reorder by and relies **entirely** on
+SRT delivering in order. A receiver that emits in *arrival* order lets one swapped packet inside
+a fragmented NAL (HEVC FU, RFC 7798) reassemble with bytes transposed → corrupt slice → the
+decoder renders only the leading CTUs (top-left) then **grays out**, and every P-frame
+referencing it stays gray until the next IDR. Visible as intermittent flashes of corruption
+(~1 frame in 6 at 720p), recovering each keyframe.
+
+**Implementation:** `handleSrtDataPacket` now re-sequences by SRT sequence number before
+emitting `data`. A small `Map<seq,payload>` buffers packets that arrive ahead of the
+next-expected sequence and releases them in order once the gap fills (`deliverInOrder` /
+`drainReorderBuf`). Genuine loss never stalls the stream: a 100 ms timer **or** a packet landing
+> 64 ahead triggers `advancePastGap`, which skips the missing sequence and drains. ACK tracking
+is unchanged (still acks the highest received seq — flow control is independent of delivery
+order). Verified end-to-end: 16/16 live frames clean over ~60 s (vs ~1-in-6 gray before), OSD
+clock advancing. Tests: `p2p-session-teardown.integration.test.ts` § "SRT receive reordering".
+
+> **Note on resolution:** "Main (4K)" on the test NVR's Ch 1 decodes at **1280×720**, not 4K —
+> this channel's main stream is 720p. Earlier "4K verified" notes likely refer to a different
+> channel/camera.
+
 ##### Relay Client ECDH Requirement (Critical Finding)
 
 From `CRelayClient::SendClnConnectReq`:

@@ -17,18 +17,18 @@ export default function LiveViewPage({ params }: { params: Promise<{ serial: str
   const [quality, setQuality] = useState<StreamQuality>('sub')
 
   const start = async () => {
-    const code = prompt('Enter device verification code (6 chars):')
-    if (!code) return
-
     setState('starting')
     setError('')
+    // No verification code: this device's live stream is unencrypted H.265 and the
+    // P2P session authenticates with credentials-only keys (P2PServerKey + linkKey).
+    // Encrypted-stream decryption lives in IMKHParser and is fed via LiveStream
+    // config, not this route — see docs/re/protocol-notes.md.
     const res = await fetch('/api/stream/start', {
       method: 'POST',
       body: JSON.stringify({
         deviceSerial: serial,
         channel: Number(ch),
         quality,
-        verificationCode: code,
       }),
       headers: { 'Content-Type': 'application/json' },
     })
