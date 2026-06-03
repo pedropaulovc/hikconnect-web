@@ -24,11 +24,18 @@ export default function ExportPanel({ serial, channel, defaultStart, defaultStop
   const [error, setError] = useState('')
 
   // Re-seed the inputs when the selected recording changes (unless mid-export).
-  useEffect(() => {
-    if (state === 'starting' || state === 'exporting') return
+  // Adjusting state during render off a tracked prop is React's recommended way
+  // to reset state on a prop change — no effect, no cascading-render — and the
+  // guard keeps the user's edited range while an export is starting/running.
+  const [seededFrom, setSeededFrom] = useState({ start: defaultStart, stop: defaultStop })
+  if (
+    (seededFrom.start !== defaultStart || seededFrom.stop !== defaultStop) &&
+    state !== 'starting' && state !== 'exporting'
+  ) {
+    setSeededFrom({ start: defaultStart, stop: defaultStop })
     setStart(serverToDatetimeLocal(defaultStart))
     setStop(serverToDatetimeLocal(defaultStop))
-  }, [defaultStart, defaultStop, state])
+  }
 
   // Poll job status once per second while the export is running.
   useEffect(() => {
