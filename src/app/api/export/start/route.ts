@@ -18,6 +18,8 @@ import { durationSeconds, exportFilename } from '../export-helpers'
 const NO_DATA_TIMEOUT_MS = 12_000
 /** Wall-clock slack past the requested duration before we hard-stop a done job. */
 const OVERRUN_SLACK_MS = 15_000
+/** ffmpeg output may finish a couple seconds short of the requested range. */
+const COMPLETE_TOLERANCE_SEC = 2
 
 /**
  * POST /api/export/start
@@ -110,7 +112,14 @@ function wireWatchdog(
 ): void {
   const startedAt = Date.now()
 
+  // Single-shot: both the watchdog interval and the 'error' handler can call
+  // finalize, and job.state is only set AFTER the await — so a state check
+  // wouldn't stop a second caller from flipping a 'done' job to 'error'. The
+  // synchronous flag (set before any await) makes the second call a no-op.
+  let finalized = false
   const finalize = async (state: ExportState, error?: string) => {
+    if (finalized) return
+    finalized = true
     clearInterval(timer)
     await stream.stop() // stops P2P + flushes the MP4 (pipe.stop awaits ffmpeg exit)
     const job = exportJobs.get(exportId)
@@ -128,7 +137,7 @@ function wireWatchdog(
     const progressed = pipe.progressSeconds > 0
     const elapsed = Date.now() - startedAt
 
-    if (progressed && pipe.progressSeconds >= requestedDurationSec - 2) {
+    if (progressed && pipe.progressSeconds >= requestedDurationSec - COMPLETE_TOLERANCE_SEC) {
       void finalize('done')
       return
     }
