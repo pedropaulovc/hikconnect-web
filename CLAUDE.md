@@ -8,8 +8,8 @@ Web client for Hikvision NVRs/cameras that streams video via the Hik-Connect clo
 
 **Phase 2 (protocol reverse engineering):** Complete. Full P2P streaming pipeline reverse-engineered from iVMS-4200 (Ghidra) and verified on VPS. P2P_SETUP → hole-punch → SRT → H.265 video data flowing.
 
-**Phase 3 (streaming + UI):** Complete. Live preview and playback both produce verified 4K video, **credentials-only (no hardcoded keys/codes) and reliably** (20/20 back-to-back).
-- **Live preview** (busType=1): Hik-RTP framing → H.265 NAL extraction → FFmpeg HLS. Verified sustained 4K HEVC.
+**Phase 3 (streaming + UI):** Complete. Live preview and playback both produce verified HEVC video, **credentials-only (no hardcoded keys/codes) and reliably** (20/20 back-to-back). Resolution is whatever the channel's encoder is configured for — the test NVR's Ch 1 main stream decodes at **1280×720**, not 4K. Verified end-to-end through the web UI (16/16 clean frames over ~60s) after the SRT reorder-buffer fix.
+- **Live preview** (busType=1): Hik-RTP framing → H.265 NAL extraction → FFmpeg HLS. Verified sustained HEVC.
 - **Playback** (busType=2): MPEG-PS container over Hik-RTP → FFmpeg demux. Verified 8.4MB recent-recording playback (NVR retention rotates old recordings off — query a recent time).
 
 **Key discovery:** Playback streams use MPEG Program Stream (PS) container, NOT raw H.265 NALs like live preview. The NVR stores recordings as PS files and streams them as-is. Strip 12-byte Hik-RTP headers from 0x8050 packets and pipe to FFmpeg as `-f mpeg`.
