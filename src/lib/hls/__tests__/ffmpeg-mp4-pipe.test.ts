@@ -57,9 +57,18 @@ describe('buildMp4FfmpegArgs', () => {
     expect(args).not.toContain('-r')
   })
 
-  it('drops audio and writes a faststart MP4 to the output path', () => {
+  it('copies the video and transcodes audio to AAC (G.711 is not MP4-portable)', () => {
     const args = buildMp4FfmpegArgs(OUT)
-    expect(args).toContain('-an')
+    // Video is stream-copied (keep native HEVC); audio is re-encoded to AAC
+    // because the NVR records G.711 (pcm_alaw), which a player cannot decode
+    // from an MP4. Must NOT drop audio.
+    expect(args).not.toContain('-an')
+    expect(args[args.indexOf('-c:v') + 1]).toBe('copy')
+    expect(args[args.indexOf('-c:a') + 1]).toBe('aac')
+  })
+
+  it('writes a faststart MP4 to the output path', () => {
+    const args = buildMp4FfmpegArgs(OUT)
     // +faststart relocates the moov atom to the front for progressive download.
     expect(args[args.indexOf('-movflags') + 1]).toBe('+faststart')
     // Output path is the final argv token.

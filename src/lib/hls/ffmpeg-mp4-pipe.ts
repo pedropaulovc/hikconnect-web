@@ -6,12 +6,17 @@ import type { VideoSink } from './video-sink'
 
 /**
  * FFmpeg argv to remux the playback MPEG-PS stream (stdin) into an MP4 file.
- * Stream-copy: no re-encode, keeps the native HEVC (main 4K / sub 640×480).
+ * Video is stream-copied (no re-encode) to keep the native HEVC (main 4K / sub
+ * 640×480). Audio is transcoded to AAC: the NVR records G.711 (`pcm_alaw`,
+ * 8 kHz mono), which is not a portable MP4 audio codec, so a copy would yield
+ * an unplayable track — AAC is the universal MP4 audio codec, and transcoding
+ * 8 kHz mono is negligible CPU next to the (copied) 4K video. If a recording
+ * has no audio track, `-c:a aac` is a no-op (no audio stream emitted).
  *
  * Export is always playback (busType=2), so the input is the MPEG-PS container
  * the NVR serves recordings as (`-f mpeg`) — NOT the live raw-HEVC elementary
  * stream. MPEG-PS carries its own PTS, so there is no synthetic `-framerate`
- * (which would corrupt the duration). Matches scripts/test-playback-ps.ts.
+ * (which would corrupt the duration).
  */
 export function buildMp4FfmpegArgs(outputPath: string): string[] {
   return [
@@ -21,7 +26,8 @@ export function buildMp4FfmpegArgs(outputPath: string): string[] {
     '-f', 'mpeg',
     '-i', 'pipe:0',
     '-c:v', 'copy',
-    '-an',
+    '-c:a', 'aac',
+    '-b:a', '64k',
     '-movflags', '+faststart',
     '-y',
     outputPath,

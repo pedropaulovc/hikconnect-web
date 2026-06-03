@@ -41,14 +41,13 @@ Key fact confirmed in code (`live-stream.ts` `wireDataPath()`): for playback (bu
 the data path calls `extractPlaybackPayload()` to strip the 12-byte Hik-RTP header and
 writes **MPEG-PS container bytes** to the sink; FFmpeg demuxes with `-f mpeg`. (Live
 preview, busType=1, instead runs `HikRtpExtractor` → raw HEVC NALs with `-f hevc`.)
-Export is always playback, so the MP4 sink receives MPEG-PS and stream-copies the HEVC
-video out of it:
+Export is always playback, so the MP4 sink receives MPEG-PS, stream-copies the HEVC
+video out of it, and transcodes the audio to AAC (the NVR records G.711 `pcm_alaw`,
+which is not a portable MP4 audio codec — a copy would yield an unplayable track):
 
 ```
-ffmpeg -f mpeg -i pipe:0 -c:v copy -an -movflags +faststart out.mp4
+ffmpeg -f mpeg -i pipe:0 -c:v copy -c:a aac -b:a 64k -movflags +faststart out.mp4
 ```
-
-(Same command proven in `scripts/test-playback-ps.ts`.)
 
 There is **no explicit end-of-stream event** from `P2PSession`. The NVR streams a
 bounded range at ~realtime, then goes quiet. Completion is detected by a data-inactivity

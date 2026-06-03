@@ -174,16 +174,22 @@ async function main() {
   const size = statSync(outputPath).size
   const video = probe.streams?.find(s => s.codec_type === 'video')
   const codec = video?.codec_name ?? ''
+  const audio = probe.streams?.find(s => s.codec_type === 'audio')
+  const acodec = audio?.codec_name ?? ''
 
   console.log('\n=== ffprobe summary ===')
   console.log(`  output:      ${outputPath}`)
   console.log(`  format_name: ${formatName}`)
   console.log(`  video codec: ${codec} (${video?.width ?? '?'}x${video?.height ?? '?'})`)
+  console.log(`  audio codec: ${acodec || '(none)'}`)
   console.log(`  duration:    ${duration.toFixed(2)}s (requested ${requestedDurationSec}s)`)
   console.log(`  size:        ${(size / 1024 / 1024).toFixed(2)} MB`)
 
   if (!/mp4|mov/.test(formatName)) fail(`container is "${formatName}", expected mp4/mov`)
   if (codec !== 'hevc') fail(`video codec is "${codec}", expected hevc`)
+  // The NVR records G.711; export transcodes it to AAC (the MP4-portable codec).
+  // A missing audio track means the export silently dropped sound.
+  if (acodec !== 'aac') fail(`audio codec is "${acodec || 'none'}", expected aac`)
   if (size <= 0) fail('output file is empty')
   const lo = requestedDurationSec * 0.8
   const hi = requestedDurationSec * 1.2
@@ -191,7 +197,7 @@ async function main() {
     fail(`duration ${duration.toFixed(2)}s outside ±20% of ${requestedDurationSec}s [${lo.toFixed(1)}, ${hi.toFixed(1)}]`)
   }
 
-  console.log(`\nPASS: ${codec} ${video?.width}x${video?.height} MP4, ${duration.toFixed(1)}s, ${(size / 1024 / 1024).toFixed(2)}MB`)
+  console.log(`\nPASS: ${codec} ${video?.width}x${video?.height} + ${acodec} MP4, ${duration.toFixed(1)}s, ${(size / 1024 / 1024).toFixed(2)}MB`)
   process.exit(0)
 }
 
