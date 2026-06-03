@@ -140,6 +140,9 @@ function wireWatchdog(
       void finalize('error', 'no footage for this range')
     }
   }, 1000)
+  // Don't let the poll keep the event loop alive; finalize() clears it on every
+  // terminal path (incl. the self-healing no-data timeout if start() threw).
+  timer.unref?.()
 }
 
 /** Backstop: drop a finished export that's never downloaded after the TTL. */
