@@ -49,3 +49,29 @@ Need the P2P server list IPs to establish UDP P2P session. Options:
 
 **Why:** Understanding the config injection model is critical — can't establish P2P without the server list IPs.
 **How to apply:** When implementing P2P client, must solve the P2P server discovery first.
+
+## Alarm events — GET /v3/alarms/advanced
+
+Per-device alarm/motion history (the app's history screen). Reverse-engineered from the
+Hik-Connect APK (jadx: `wb6.java`/`lda.java`) and verified live 2026-06-03.
+
+Query params: `limit` (page size), `queryType=-1`, `alarmType=-1` (app defaults; -1 = all),
+`deviceSerial`, `alarmStart` / `alarmEnd` (`"yyyy-MM-dd HH:mm:ss"`, device wall-clock),
+`offset`. Response: `{ meta, alarms[], page: { offset, limit, totalResults, hasNext } }`.
+
+Alarm fields used: `alarmId, channelNo, alarmName, alarmType, sampleName, alarmMessage,
+alarmStartTime (epoch ms), alarmStartTimeStr, picUrl (signed; directly fetchable when
+isEncrypt=0), isCheck (0=unread), isEncrypt, preTime, delayTime`.
+
+Two non-obvious behaviors (verified):
+- `page.totalResults` is unreliable: it returns a placeholder 100 on the first page
+  (offset=0) and the true count only once offset >= limit. Paginate off `hasNext`, never
+  `totalResults`.
+- `offset` is page-quantized to `limit`: the server floors a requested offset to
+  floor(offset/limit)*limit and echoes the snapped value as `page.offset`. Keep `limit`
+  fixed and advance the cursor as `page.offset + limit` to stay page-aligned.
+
+The endpoint has NO channel parameter — it is device-wide. Per-camera filtering is done
+client-side on `channelNo` (see `src/lib/hikconnect/alarms.ts` `collectChannelAlarms`).
+
+NOT `/v3/alarms/v2/advanced` (ignores offset/time filters, returns latest ~100).

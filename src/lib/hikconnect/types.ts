@@ -124,6 +124,37 @@ export type RecordListResponse = ApiResponse<{
   files: RecordFile[]
 }>
 
+/** A single alarm/motion event from /v3/alarms/advanced */
+export type AlarmEvent = {
+  alarmId: string
+  channelNo: number
+  alarmName: string          // "Bikes"
+  alarmType: number          // 10002
+  sampleName: string         // "Motion Detection Alarm"
+  alarmMessage: string       // "Bikes Motion Detection Alarm"
+  alarmStartTime: number     // epoch ms (UTC)
+  alarmStartTimeStr: string  // "2026-06-03 13:07:20" (device wall-clock)
+  picUrl: string             // signed thumbnail; directly fetchable when isEncrypt=0
+  isCheck: number            // 0 = unread
+  isEncrypt: number          // 0 for this account
+  preTime: number            // seconds before event
+  delayTime: number          // seconds after event
+}
+
+/** Pagination block on /v3/alarms/advanced. NOTE: totalResults is unreliable — use hasNext. */
+export type AlarmPage = {
+  offset: number
+  limit: number
+  totalResults: number
+  hasNext: boolean
+}
+
+/** GET /v3/alarms/advanced response */
+export type AlarmListResponse = ApiResponse<{
+  alarms: AlarmEvent[]
+  page: AlarmPage
+}>
+
 /** P2P server entry from pagelist */
 export type P2PServer = {
   ip: string

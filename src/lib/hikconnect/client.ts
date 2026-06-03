@@ -5,6 +5,7 @@ import type {
   LoginResponse, RefreshResponse, DeviceListResponse, CameraListResponse,
   StreamTicketResponse, VtmInfoResponse, RelayServerResponse, RecordListResponse,
   VtmInfo, StreamServerConfig, RecordFile,
+  AlarmEvent, AlarmPage, AlarmListResponse,
   P2PDeviceListResponse, P2PConfig,
   P2PSecret, P2PConfigurationsResponse,
 } from './types'
@@ -181,6 +182,23 @@ export class HikConnectClient {
       `/v3/streaming/records?deviceSerial=${deviceSerial}&channelNo=${channelNo}&startTime=${startTime}&stopTime=${stopTime}&size=500`
     )
     return data.files ?? []
+  }
+
+  async getAlarms(
+    deviceSerial: string,
+    opts: { alarmStart: string; alarmEnd: string; offset?: number; limit?: number },
+  ): Promise<{ alarms: AlarmEvent[]; page: AlarmPage }> {
+    const qs = new URLSearchParams({
+      limit: String(opts.limit ?? 50),
+      queryType: '-1',
+      alarmType: '-1',
+      deviceSerial,
+      alarmStart: opts.alarmStart,
+      alarmEnd: opts.alarmEnd,
+      offset: String(opts.offset ?? 0),
+    })
+    const data = await this.get<AlarmListResponse>(`/v3/alarms/advanced?${qs.toString()}`)
+    return { alarms: data.alarms ?? [], page: data.page }
   }
 
   async getP2PConfig(deviceSerial: string): Promise<P2PConfig> {
