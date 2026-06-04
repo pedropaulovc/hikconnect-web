@@ -173,10 +173,12 @@ export function buildEcdhReqPacket(opts: {
   // header[0:134] = header + wrap + pubkey (0x86 = 134 bytes)
   const head134 = Buffer.concat([header, wrap, pubKey])
 
-  // MAC = HMAC-SHA256(masterKey, ascii("%u%u" % (crc32(body), crc32(header[0:134]))))
-  const crcBody = crc32(encBody)
+  // MAC = HMAC-SHA256(masterKey, ascii("%u%u" % (crc32(header[0:134]), crc32(body))))
+  // Arg order confirmed from FUN_180002b30 disassembly: sprintf_s(buf,0x20,"%u%u", R9D=crcHeader,
+  // [rsp+0x20]=crcBody) — i.e. HEADER crc first, then BODY crc.
   const crcHead = crc32(head134)
-  const macMsg = Buffer.from(`${crcBody >>> 0}${crcHead >>> 0}`, 'ascii')
+  const crcBody = crc32(encBody)
+  const macMsg = Buffer.from(`${crcHead >>> 0}${crcBody >>> 0}`, 'ascii')
   const mac = createHmac('sha256', masterKey).update(macMsg).digest()
 
   return Buffer.concat([head134, encBody, mac])
