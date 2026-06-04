@@ -1,14 +1,14 @@
 import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { useRouter } from 'expo-router';
 import { cameraById, eventsForCamera, recordingsForCamera } from '../data';
 import { colors } from '../theme/colors';
-import { useNav } from '../navigation/router';
 import { LivePlayer } from '../components/LivePlayer';
 import { EventListItem } from '../components/EventListItem';
 import { RecordingListItem } from '../components/RecordingListItem';
 import { Badge, SectionHeader } from '../components/ui';
 
 export function CameraDetailScreen({ cameraId }: { cameraId: string }) {
-  const nav = useNav();
+  const router = useRouter();
   const camera = cameraById(cameraId);
   const { width } = useWindowDimensions();
   const wide = width >= 1100;
@@ -57,7 +57,7 @@ export function CameraDetailScreen({ cameraId }: { cameraId: string }) {
           <SectionHeader
             title="Recordings"
             action={
-              <Pressable onPress={() => nav.replaceRoot({ name: 'recordings' })}>
+              <Pressable onPress={() => router.replace('/recordings')}>
                 <Text style={styles.link}>View all</Text>
               </Pressable>
             }

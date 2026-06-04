@@ -13,6 +13,10 @@ main area. On desktop the Cameras page is a **camera wall** — every online cam
 simultaneously in a responsive grid that reflows to fit the window. It collapses to a single column
 with a hamburger drawer on phones (so the planned native build still works).
 
+Routing is **Expo Router** (file-based, built on React Navigation), so every screen has a real URL
+— `/`, `/camera/front-door`, `/recordings`, `/playback/rec-003`, `/events`. Deep links, page
+refresh, and browser back/forward all work, and the same routes drive a native build.
+
 Everything is **mocked**: cameras, detection events, and recordings are static data, and the
 players point at public sample streams (Mux test HLS for "live", Google sample MP4s for
 "recordings"). No backend.
@@ -66,16 +70,24 @@ screens, navigation, and data layer carry over unchanged.
 ## Layout
 
 ```
+app/                       Expo Router routes (file-based)
+  _layout.tsx              NVR shell: sidebar + header + mobile drawer, wraps <Slot/>
+  index.tsx                /                      → CamerasWall
+  recordings.tsx           /recordings            → Recordings
+  events.tsx               /events                → Events
+  camera/[cameraId].tsx    /camera/:id            → CameraDetail (focus)
+  playback/[recordingId].tsx  /playback/:id       → Playback
+  +not-found.tsx           catch-all
 src/
   theme/        colors (dark NVR palette)
   data/         mock cameras, events, recordings + selectors
-  navigation/   tiny route-stack router (push / replaceRoot / back) — no React Navigation
   components/   Sidebar, CameraTile (wall), LivePlayer (hls.js), VideoPlayer,
                 EventListItem, RecordingListItem, CameraFilter, detection (icons/time), ui
   screens/      CamerasWall (wall), CameraDetail (focus), Recordings, Playback, Events
-  AppShell.tsx  sidebar + header + screen body + mobile drawer
-App.tsx         NavProvider + AppShell
 ```
+
+The `app/` route files are thin: each reads its URL params (`useLocalSearchParams`) and renders the
+matching `src/screens/` component, so the screens stay plain and testable.
 
 ## Tests
 

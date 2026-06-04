@@ -1,8 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import { ImageBackground, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useRouter } from 'expo-router';
 import type { Camera, DetectionEvent } from '../data/types';
 import { colors } from '../theme/colors';
-import { useNav } from '../navigation/router';
 import { LivePlayer } from './LivePlayer';
 import { detectionMeta, formatRelativeTime } from './detection';
 import { Chip, StatusDot } from './ui';
@@ -14,14 +14,14 @@ interface CameraTileProps {
 
 /** A single live tile in the camera wall. Streams when online, shows an offline state otherwise. */
 export function CameraTile({ camera, lastEvent }: CameraTileProps) {
-  const nav = useNav();
+  const router = useRouter();
   const online = camera.status === 'online';
   const meta = lastEvent ? detectionMeta(lastEvent.type) : null;
 
   return (
     <Pressable
       style={styles.tile}
-      onPress={() => nav.push({ name: 'cameraDetail', cameraId: camera.id })}
+      onPress={() => router.push(`/camera/${camera.id}`)}
     >
       <View style={styles.video}>
         {online ? (

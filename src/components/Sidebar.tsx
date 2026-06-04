@@ -1,30 +1,31 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { usePathname, useRouter, type Href } from 'expo-router';
 import { colors } from '../theme/colors';
-import { useNav, type Route } from '../navigation/router';
 
+/** `match` decides the active item from the URL so detail/playback keep their parent section lit. */
 const NAV = [
-  { key: 'wall', label: 'Cameras', icon: 'videocam', group: ['wall', 'cameraDetail'] },
-  { key: 'recordings', label: 'Recordings', icon: 'film', group: ['recordings', 'playback'] },
-  { key: 'events', label: 'Events', icon: 'notifications', group: ['events'] },
+  { href: '/', label: 'Cameras', icon: 'videocam', match: (p: string) => p === '/' || p.startsWith('/camera') },
+  { href: '/recordings', label: 'Recordings', icon: 'film', match: (p: string) => p.startsWith('/recordings') || p.startsWith('/playback') },
+  { href: '/events', label: 'Events', icon: 'notifications', match: (p: string) => p.startsWith('/events') },
 ] as const;
 
 export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
-  const nav = useNav();
-  const current = nav.route.name;
+  const router = useRouter();
+  const pathname = usePathname();
 
   return (
     <View style={styles.sidebar}>
       <Text style={styles.brand}>CCTV Demo</Text>
       <Text style={styles.sectionLabel}>MONITORING</Text>
       {NAV.map((item) => {
-        const active = (item.group as readonly string[]).includes(current);
+        const active = item.match(pathname);
         return (
           <Pressable
-            key={item.key}
+            key={item.href}
             style={[styles.item, active && styles.itemActive]}
             onPress={() => {
-              nav.replaceRoot({ name: item.key } as Route);
+              router.replace(item.href as Href);
               onNavigate?.();
             }}
           >

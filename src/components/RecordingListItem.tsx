@@ -1,8 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useRouter } from 'expo-router';
 import type { Recording } from '../data/types';
 import { colors } from '../theme/colors';
-import { useNav } from '../navigation/router';
 import { formatClock } from './detection';
 
 function formatDuration(sec: number): string {
@@ -18,12 +18,12 @@ export function RecordingListItem({
   recording: Recording;
   cameraName?: string;
 }) {
-  const nav = useNav();
+  const router = useRouter();
 
   return (
     <Pressable
       style={styles.row}
-      onPress={() => nav.push({ name: 'playback', recordingId: recording.id })}
+      onPress={() => router.push(`/playback/${recording.id}`)}
     >
       <Image source={{ uri: recording.thumbnailUrl }} style={styles.thumb} />
       <View style={styles.body}>

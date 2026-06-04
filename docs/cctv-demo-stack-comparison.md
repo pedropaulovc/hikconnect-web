@@ -9,7 +9,7 @@ what's shared, what diverges, and why.
 | UI framework | Ionic React 8 | React Native + react-native-web (Expo SDK 56) |
 | Build / dev server | Vite 6 | Metro (via Expo) |
 | Language | TypeScript 5.7 | TypeScript 6.0 (strict) |
-| Routing | `@ionic/react-router` + `react-router` 5 (URL routes) | custom in-app route-stack (no URLs) |
+| Routing | `@ionic/react-router` + `react-router` 5 (URL routes) | Expo Router (file-based, URL routes) |
 | Layout primitives | Ionic components + CSS files | RN `View`/`Text`/`Pressable` + `StyleSheet` |
 | Styling | CSS + Ionic CSS variables (`theme/variables.css`) | JS `StyleSheet` objects + a `colors` module |
 | Icons | `ionicons` (web components) | `@expo/vector-icons` (Ionicons set) |
@@ -35,14 +35,21 @@ what's shared, what diverges, and why.
 ## Where they diverge, and why
 
 ### Routing
-- **Capacitor:** real URL routes (`/live`, `/live/:cameraId`, `/playback/:recordingId`, …) via
-  `IonReactRouter` + `IonRouterOutlet`, wrapped in `IonSplitPane` for the sidebar. Deep-linkable,
-  browser back/forward works for free.
-- **RNW:** a tiny `NavProvider` holds a route stack (`push` / `replaceRoot` / `back` /
-  `canGoBack`); the route is a discriminated union. **No URLs, no browser history integration.**
-  Chosen to avoid React Navigation's `react-native-reanimated` + `react-native-gesture-handler`
-  web-setup friction for a demo that only needs flat screen-to-screen pushes. This is the biggest
-  behavioral difference: the Ionic build is URL-addressable; the RNW build is not.
+Both builds now have **real, URL-addressable routes** — they just get there through their stack's
+native router:
+- **Capacitor:** `IonReactRouter` + `IonRouterOutlet` (`/live`, `/live/:cameraId`,
+  `/playback/:recordingId`, …), wrapped in `IonSplitPane` for the sidebar.
+- **RNW:** **Expo Router** (file-based, built on React Navigation). The `app/` directory *is* the
+  route table (`app/camera/[cameraId].tsx` → `/camera/:cameraId`); params are read with
+  `useLocalSearchParams`, navigation with `useRouter`. Deep links, refresh, and browser
+  back/forward all work, and the same routes drive a native build.
+
+> **History note:** the RNW build first shipped a hand-rolled in-memory route stack (`NavProvider`
+> + a `Route` discriminated union, **no URLs**) to dodge React Navigation's web-setup weight. Once
+> shareable/refresh-proof URLs became a requirement, that was the wrong trade and Expo Router
+> replaced it — at the cost of a heavier dependency set (`react-native-screens`,
+> `react-native-safe-area-context`, reanimated). The screens, data layer, and players didn't
+> change; only the router/param plumbing and the shell location did.
 
 ### Layout & responsiveness
 - **Capacitor:** `IonSplitPane` gives the permanent-sidebar / collapsing-drawer behavior for free
@@ -75,7 +82,7 @@ what's shared, what diverges, and why.
 
 ## One-line takeaway
 
-Same product, same data, same look. **Capacitor = web app in a native shell** (URL routing,
-CSS/Ionic, WebView on device). **RNW = real native UI that also runs on the web** (hand-rolled
-router/layout, StyleSheet, native views on device) — with DOM `<video>` as the one web seam to
-replace for a true native build.
+Same product, same data, same look, **and now both are URL-addressable**. **Capacitor = web app in
+a native shell** (Ionic router, CSS/Ionic, WebView on device). **RNW = real native UI that also
+runs on the web** (Expo Router, hand-rolled responsive layout, StyleSheet, native views on device)
+— with DOM `<video>` as the one web seam to replace for a true native build.

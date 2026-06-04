@@ -26,25 +26,37 @@ Features (identical to the Ionic build):
 - **Data:** mocked TypeScript modules under `src/data/` — copied verbatim from the Ionic build so
   both apps render identical content.
 
-## Navigation — custom route stack (no React Navigation)
+## Navigation — Expo Router (file-based)
 
-React Navigation pulls in `react-native-reanimated` + `react-native-gesture-handler`, which add
-web setup friction for a demo that only needs flat screen-to-screen pushes. Instead a tiny
-`NavProvider` holds a route stack with `push` / `replaceRoot` / `back` / `canGoBack`, and the route
-is a discriminated union:
+Navigation is **Expo Router** (file-based routing built on React Navigation), so every screen has a
+real URL with deep links, refresh, and browser back/forward — and the same routes drive a native
+build. The route tree lives in `app/`:
 
-```ts
-type Route =
-  | { name: 'wall' }
-  | { name: 'cameraDetail'; cameraId: string }
-  | { name: 'recordings' }
-  | { name: 'playback'; recordingId: string }
-  | { name: 'events' };
+```
+app/
+  _layout.tsx                  NVR shell (sidebar + header + drawer) wrapping <Slot/>
+  index.tsx                    /
+  recordings.tsx               /recordings
+  events.tsx                   /events
+  camera/[cameraId].tsx        /camera/:cameraId
+  playback/[recordingId].tsx   /playback/:recordingId
+  +not-found.tsx               catch-all
 ```
 
-`AppShell` maps the active route to a screen and a title. The persistent **sidebar** (Cameras /
-Recordings / Events) is the primary nav on desktop; a back button appears for pushed detail
-screens.
+The route files are thin wrappers: each reads its params via `useLocalSearchParams` and renders the
+matching `src/screens/` component, keeping the screens plain and testable. The shared NVR shell
+lives in `app/_layout.tsx` — it derives the header title and active sidebar item from the current
+URL (`usePathname` + `useGlobalSearchParams`) and renders the active screen through `<Slot/>`.
+Imperative jumps use `useRouter` (`router.push('/camera/' + id)`, `router.replace('/recordings')`,
+`router.back()`); the persistent **sidebar** is the primary nav on desktop and a back button
+appears on detail/playback routes.
+
+> **Earlier iteration:** the first cut used a hand-rolled in-memory route stack (`NavProvider` with
+> a `Route` discriminated union) to avoid React Navigation's web-setup weight. That was fine until
+> shareable/refresh-proof URLs became a requirement — at which point Expo Router is the correct
+> tool, and it replaced the custom router. The trade is the heavier dependency set
+> (`react-native-screens`, `react-native-safe-area-context`, reanimated) for real URLs + native
+> parity. See `docs/cctv-demo-stack-comparison.md`.
 
 ## Responsive NVR layout
 
@@ -85,4 +97,4 @@ in Chrome is the meaningful proof. Kept light — appropriate for a demo.
 ## Out of scope (YAGNI)
 
 Real backend, auth, push notifications, native build this pass, real PTZ / timeline scrubbing,
-React Navigation, a cross-platform video abstraction.
+a cross-platform video abstraction.

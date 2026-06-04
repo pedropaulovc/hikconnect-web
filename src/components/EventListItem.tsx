@@ -1,18 +1,18 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useRouter } from 'expo-router';
 import type { DetectionEvent } from '../data/types';
 import { colors } from '../theme/colors';
-import { useNav } from '../navigation/router';
 import { detectionMeta, formatRelativeTime } from './detection';
 import { Chip } from './ui';
 
 export function EventListItem({ event, cameraName }: { event: DetectionEvent; cameraName?: string }) {
-  const nav = useNav();
+  const router = useRouter();
   const meta = detectionMeta(event.type);
 
   const onPress = () => {
-    if (event.recordingId) return nav.push({ name: 'playback', recordingId: event.recordingId });
-    return nav.push({ name: 'cameraDetail', cameraId: event.cameraId });
+    if (event.recordingId) return router.push(`/playback/${event.recordingId}`);
+    return router.push(`/camera/${event.cameraId}`);
   };
 
   return (
