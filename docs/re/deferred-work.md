@@ -121,6 +121,20 @@ type: project
          The real lever is **provisioning** (enable "Image and Video Encryption" in Hik-Connect →
          re-check whether `vtduServerPublicKey` flips non-zero) or a **different, ECDH-provisioned
          device/account**, not NAT manipulation.
+    - **Update (2026-06-04, endpoint + capability findings):** a relay/VTM key IS provisioned now —
+      `pagelist` `VTM` and `query/relay` both return the same `publicKey` (`MFkw…`, ver 1). Two distinct
+      endpoints/protocols: the **relay CDN** `148.153.39.254:6123` ("relaydallas") speaks the
+      **raw-ECDH-packet** protocol (`relay-client.ts`) and returns a structured `0x2715`; the **VTM**
+      `148.153.53.29:8554` ("vtmvirginia") uses **protobuf framing** (`vtm-client.ts`, incomplete) and
+      ignores the raw packet (no response). So `6123` is the right endpoint for the RE'd protocol, and
+      its `0x2715` is a **secret mismatch** (crypto is proven correct). Best explanation — and it
+      supports the **NVR-side** theory: the relay holds a *matching per-device* key only when the NVR
+      actually registers via the relay (i.e. when it can't P2P). This NVR uses P2P (CONNECTION
+      `netType=3`, reachable at `24.35.64.195`), so the relay has no per-device session → generic
+      key → `0x2715`. ⇒ The right experiment is **symmetric NAT on the NVR's LAN** (needs physical/network
+      access to the NVR at "812 5th Ave N" — not doable from the dev sandbox). Caveat: if `MFkw…` is a
+      global placeholder that never matches, NVR NAT won't help either; the NVR test distinguishes them.
+      Device: `NVR-8-A` (HNR33P8-8/D), fw `V4.71.106 build 221205`.
     - **Windows RE method** (`docs/re/2026-06-04-ivms4200-ecdh-kdf-capture-task.md`): drove the DLL's
       exported pipeline in-process via Frida `NativeFunction` (live relay handshake couldn't be forced).
     - Prior Android note (`docs/re/ecdh-frida-capture.md`): ECDH not triggered for device L38239367
