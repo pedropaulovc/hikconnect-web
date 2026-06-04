@@ -1095,7 +1095,15 @@ export class P2PSession extends EventEmitter {
     this.srtTotalBytes += payload.length
 
     if (this.srtDataCount <= 5 || this.srtDataCount % 100 === 0) {
-      log.info(`[SRT-DATA] #${this.srtDataCount} seq=${seqNum} ctrl=${isControlKeepalive} payload=${payload.length}B total=${this.srtTotalBytes}B first16=${payload.subarray(0, Math.min(16, payload.length)).toString('hex')}`)
+      log.trace('srt data', {
+        'net.direction': 'recv',
+        'srt.dataCount': this.srtDataCount,
+        'srt.seq': seqNum,
+        'srt.control': isControlKeepalive,
+        'net.bytes': payload.length,
+        'srt.totalBytes': this.srtTotalBytes,
+        'srt.first16': payload.subarray(0, Math.min(16, payload.length)).toString('hex'),
+      })
     }
 
     // Control keepalives belong to the other SRT session — they neither advance
@@ -1212,7 +1220,13 @@ export class P2PSession extends EventEmitter {
     pkt.writeUInt32BE(0, 40)     // Receiving rate (bytes/s)
 
     if (this.srtAckNumber <= 5 || this.srtAckNumber % 50 === 0) {
-      log.info(`[SRT-ACK] #${this.srtAckNumber - 1} ackSeq=${lastRecvSeq + 1} peerSocket=0x${(this.srtPeerSocketId ?? 0).toString(16)} dataCount=${this.srtDataCount}`)
+      log.trace('srt ack', {
+        'net.direction': 'send',
+        'srt.ackNumber': this.srtAckNumber - 1,
+        'srt.ackSeq': lastRecvSeq + 1,
+        'srt.peerSocket': `0x${(this.srtPeerSocketId ?? 0).toString(16)}`,
+        'srt.dataCount': this.srtDataCount,
+      })
     }
     this.sendToDevice(pkt)
   }

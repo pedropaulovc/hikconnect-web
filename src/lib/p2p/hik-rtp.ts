@@ -186,7 +186,12 @@ export class HikRtpExtractor extends EventEmitter {
         0: 'TRAIL_N', 1: 'TRAIL_R', 19: 'IDR_W_RADL', 20: 'IDR_N_LP',
         21: 'CRA_NUT', 32: 'VPS', 33: 'SPS', 34: 'PPS',
       }
-      log.info(`[H265] NAL #${this.nalCount}: type=${nalType} (${names[nalType] ?? '?'}) size=${data.length}B`)
+      log.trace('h265 nal', {
+        'nal.count': this.nalCount,
+        'nal.type': nalType,
+        'nal.name': names[nalType] ?? 'unknown',
+        'net.bytes': data.length,
+      })
     }
   }
 }
