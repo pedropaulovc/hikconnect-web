@@ -1,0 +1,7 @@
+#!/bin/bash
+
+# post-checkout args: $1=prev HEAD, $2=new HEAD, $3=flag (1=branch, 0=file).
+# Only nudge on branch switches (a different branch may carry different deps),
+# not on file checkouts. Warn-only; predev/prebuild is the hard gate.
+[ "$3" = "1" ] || exit 0
+node scripts/check-deps.mjs || true
