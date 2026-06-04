@@ -65,6 +65,7 @@ type: project
 15. **ECDH custom KDF** — Relay and VTM paths need ECDH P-256 handshake. The packet structure works (relay accepts, returns response) but the KDF uses a custom Matyas-Meyer-Oseas hash + SHA-256 DRBG (confirmed from ecdhCryption.dll RE). Relay returns error 0x2715.
     - **Frida capture (2026-03-18):** See `docs/re/ecdh-frida-capture.md`. ECDH is NOT triggered for device L38239367 (`udpEcdh=0`, `vtduServerPublicKey` all zeros). Complete InitParam structure captured. The Java API surface is fully mapped: `NativeApi.generateECDHKey()`, `setClientECDHKey()`, `enableStreamClientCMDEcdh()`.
     - To get test vectors, need: (a) device with ECDH enabled, (b) ARM64 emulator for native Frida hooks, or (c) iVMS-4200 Windows with Frida hooking ecdhCryption.dll
+    - **(c) is specced as a standalone handoff task** for a Windows Claude instance: `docs/re/2026-06-04-ivms4200-ecdh-kdf-capture-task.md`. Closing this item depends on the vectors it produces (`docs/re/ecdh-kdf-vectors.md`).
 
 ### Remaining — Integration
 
