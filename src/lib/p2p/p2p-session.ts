@@ -12,6 +12,7 @@ import { createSocket, type Socket as UdpSocket } from 'node:dgram'
 import { EventEmitter } from 'node:events'
 import { createCipheriv, randomUUID } from 'node:crypto'
 import { encodeV3Message, decodeV3Message, defaultMask, encodeMask, Opcode, crc8, type V3Message } from './v3-protocol'
+import { log } from '../telemetry/log'
 
 // P2P server key + salt are NOT hardcoded — they rotate server-side and MUST be
 // fetched fresh per session via client.getP2PSecret() (POST /api/p2p/configurations).
@@ -217,13 +218,13 @@ export class P2PSession extends EventEmitter {
     // Step 2: Wait for device punch-through (0x0C00)
     // After P2P_SETUP, the server notifies the device, which sends us 0x0C00.
     // Our handleV3Response() will catch it and send 0x0C01 response.
-    console.log('[P2P] P2P_SETUP sent, waiting for device punch (0x0C00)...')
+    log.info('[P2P] P2P_SETUP sent, waiting for device punch (0x0C00)...')
     await this.waitForPunch(10_000)
 
     if (this.punchComplete) {
-      console.log(`[P2P] Hole-punch complete! Device at ${this.devicePeerIp}:${this.devicePeerPort}`)
+      log.info(`[P2P] Hole-punch complete! Device at ${this.devicePeerIp}:${this.devicePeerPort}`)
     } else {
-      console.log('[P2P] Punch timeout — device did not send 0x0C00. Trying direct punch...')
+      log.info('[P2P] Punch timeout — device did not send 0x0C00. Trying direct punch...')
       // Fallback: send empty packets to the known device address
       this.holePunch()
       await delay(2000)
@@ -237,14 +238,14 @@ export class P2PSession extends EventEmitter {
       for (let i = 0; i < 3; i++) {
         this.sendTo(directMsg, this.devicePeerPort, this.devicePeerIp)
       }
-      console.log(`[P2P] PLAY_REQUEST sent directly to device ${this.devicePeerIp}:${this.devicePeerPort}`)
+      log.info(`[P2P] PLAY_REQUEST sent directly to device ${this.devicePeerIp}:${this.devicePeerPort}`)
     }
 
     // Path B: Send PLAY_REQUEST via P2P server relay (TRANSFOR_DATA wrapper)
     const relayMsg = this.buildP2PServerRequest()
     for (const server of this.config.p2pServers) {
       this.sendTo(relayMsg, server.port, server.host)
-      console.log(`[P2P] PLAY_REQUEST sent via relay ${server.host}:${server.port}`)
+      log.info(`[P2P] PLAY_REQUEST sent via relay ${server.host}:${server.port}`)
     }
 
     await delay(3000)
@@ -676,7 +677,12 @@ export class P2PSession extends EventEmitter {
   // -- Packet Handler --
 
   private handlePacket(buf: Buffer, _fromAddr: string, _fromPort: number): void {
-    console.log(`[P2P] recv ${buf.length}B from ${_fromAddr}:${_fromPort} type=0x${buf.length >= 2 ? buf.readUInt16BE(0).toString(16) : '??'}`)
+    log.trace('p2p recv', {
+      'net.direction': 'recv',
+      'net.bytes': buf.length,
+      'net.peer': `${_fromAddr}:${_fromPort}`,
+      'p2p.type': buf.length >= 2 ? `0x${buf.readUInt16BE(0).toString(16)}` : 'unknown',
+    })
 
     if (buf.length < 2) return
 
@@ -750,7 +756,7 @@ export class P2PSession extends EventEmitter {
 
     // Unknown packet — log for debugging
     if (buf.length > 4) {
-      console.log(`[P2P] Unhandled packet ${buf.length}B type=0x${type.toString(16)} first16=${buf.subarray(0, Math.min(16, buf.length)).toString('hex')}`)
+      log.info(`[P2P] Unhandled packet ${buf.length}B type=0x${type.toString(16)} first16=${buf.subarray(0, Math.min(16, buf.length)).toString('hex')}`)
     }
   }
 
@@ -763,13 +769,13 @@ export class P2PSession extends EventEmitter {
         ? decodeV3Message(buf, this.config.p2pKey)
         : decodeV3Message(buf)
     } catch (err) {
-      console.log(`[P2P] V3 decode error: ${err instanceof Error ? err.message : err}`)
+      log.info(`[P2P] V3 decode error: ${err instanceof Error ? err.message : err}`)
       return
     }
 
-    console.log(`[P2P] V3 response from ${fromAddr}:${fromPort} cmd=0x${msg.msgType.toString(16)} attrs=${msg.attributes.length}`)
+    log.info(`[P2P] V3 response from ${fromAddr}:${fromPort} cmd=0x${msg.msgType.toString(16)} attrs=${msg.attributes.length}`)
     for (const attr of msg.attributes) {
-      console.log(`  attr tag=0x${attr.tag.toString(16)} len=${attr.value.length} val=${attr.value.toString('hex')}`)
+      log.info(`  attr tag=0x${attr.tag.toString(16)} len=${attr.value.length} val=${attr.value.toString('hex')}`)
     }
 
     // P2P_SETUP response (0x0B03) — extract device stream port and pre-punch
@@ -785,7 +791,7 @@ export class P2PSession extends EventEmitter {
 
     // Handle device punch response (0x0C01)
     if (msg.msgType === Opcode.PUNCH_RESPONSE) {
-      console.log(`[P2P] Received punch response from ${fromAddr}:${fromPort}`)
+      log.info(`[P2P] Received punch response from ${fromAddr}:${fromPort}`)
       return
     }
 
@@ -817,7 +823,7 @@ export class P2PSession extends EventEmitter {
         if (colonIdx > 0) {
           const devicePort = parseInt(addrStr.substring(colonIdx + 1), 10)
           if (devicePort > 0 && devicePort < 65536) {
-            console.log(`[P2P] Device stream port from P2P_SETUP: ${devicePort} (${addrStr})`)
+            log.info(`[P2P] Device stream port from P2P_SETUP: ${devicePort} (${addrStr})`)
             this.deviceStreamPort = devicePort
             // Pre-punch: send packets to device's PUBLIC IP on this port
             // This creates a NAT mapping so the device's 0x0C00 can reach us
@@ -825,7 +831,7 @@ export class P2PSession extends EventEmitter {
             for (let i = 0; i < 5; i++) {
               this.sendTo(punch, devicePort, this.config.devicePublicIp)
             }
-            console.log(`[P2P] Pre-punched to ${this.config.devicePublicIp}:${devicePort}`)
+            log.info(`[P2P] Pre-punched to ${this.config.devicePublicIp}:${devicePort}`)
           }
         }
       }
@@ -834,7 +840,7 @@ export class P2PSession extends EventEmitter {
   }
 
   private handlePunchRequest(msg: V3Message, fromAddr: string, fromPort: number): void {
-    console.log(`[P2P] Device punch request (0x0C00) from ${fromAddr}:${fromPort}`)
+    log.info(`[P2P] Device punch request (0x0C00) from ${fromAddr}:${fromPort}`)
 
     // Update device peer address to the actual source of the punch
     this.devicePeerIp = fromAddr
@@ -846,7 +852,7 @@ export class P2PSession extends EventEmitter {
     for (let i = 0; i < 10; i++) {
       this.sendTo(response, fromPort, fromAddr)
     }
-    console.log(`[P2P] Sent 10x punch response (0x0C01) to ${fromAddr}:${fromPort}`)
+    log.info(`[P2P] Sent 10x punch response (0x0C01) to ${fromAddr}:${fromPort}`)
 
     // Mark punch as complete
     this.punchComplete = true
@@ -920,7 +926,7 @@ export class P2PSession extends EventEmitter {
     const peerSocketId = buf.readUInt32BE(40)
     const synCookie = buf.readUInt32BE(44)
 
-    console.log(`[SRT] Handshake: version=${srtVersion} ext=${srtExtension} type=${hsType} socketId=0x${peerSocketId.toString(16)} cookie=0x${synCookie.toString(16)} mtu=${mtu} window=${window}`)
+    log.info(`[SRT] Handshake: version=${srtVersion} ext=${srtExtension} type=${hsType} socketId=0x${peerSocketId.toString(16)} cookie=0x${synCookie.toString(16)} mtu=${mtu} window=${window}`)
 
     if (hsType === 1 && srtVersion === 4) {
       // SRT INDUCTION handshake — respond with our induction response
@@ -935,7 +941,7 @@ export class P2PSession extends EventEmitter {
     }
 
     // For other handshake types, log and extract data session
-    console.log(`[SRT] Unhandled handshake type: ${hsType}`)
+    log.info(`[SRT] Unhandled handshake type: ${hsType}`)
     if (initSeq !== 0 && this.dataSessionId === 0) {
       this.dataSessionId = initSeq
       this.emit('dataSessionEstablished', initSeq)
@@ -972,11 +978,11 @@ export class P2PSession extends EventEmitter {
     this.srtPeerSocketId = peerSocketId
 
     this.sendToDevice(pkt)
-    console.log(`[SRT] Sent induction response, cookie=0x${synCookie.toString(16)}, ourSocketId=0x${this.sourceId.toString(16)}, peerSocket=0x${peerSocketId.toString(16)}`)
+    log.info(`[SRT] Sent induction response, cookie=0x${synCookie.toString(16)}, ourSocketId=0x${this.sourceId.toString(16)}, peerSocket=0x${peerSocketId.toString(16)}`)
   }
 
   private handleSrtConclusion(_buf: Buffer, peerSocketId: number): void {
-    console.log(`[SRT] CONCLUSION received (${_buf.length}B) peerSocket=0x${peerSocketId.toString(16)}`)
+    log.info(`[SRT] CONCLUSION received (${_buf.length}B) peerSocket=0x${peerSocketId.toString(16)}`)
 
     // The SRT connection is now established
     // Set data session from the initial sequence number
@@ -1016,7 +1022,7 @@ export class P2PSession extends EventEmitter {
     pkt.writeUInt32BE(0, 76)         // Reserved
 
     this.sendToDevice(pkt)
-    console.log(`[SRT] Sent conclusion response with extensions`)
+    log.info(`[SRT] Sent conclusion response with extensions`)
   }
 
   private srtDataCount = 0
@@ -1089,7 +1095,7 @@ export class P2PSession extends EventEmitter {
     this.srtTotalBytes += payload.length
 
     if (this.srtDataCount <= 5 || this.srtDataCount % 100 === 0) {
-      console.log(`[SRT-DATA] #${this.srtDataCount} seq=${seqNum} ctrl=${isControlKeepalive} payload=${payload.length}B total=${this.srtTotalBytes}B first16=${payload.subarray(0, Math.min(16, payload.length)).toString('hex')}`)
+      log.info(`[SRT-DATA] #${this.srtDataCount} seq=${seqNum} ctrl=${isControlKeepalive} payload=${payload.length}B total=${this.srtTotalBytes}B first16=${payload.subarray(0, Math.min(16, payload.length)).toString('hex')}`)
     }
 
     // Control keepalives belong to the other SRT session — they neither advance
@@ -1206,7 +1212,7 @@ export class P2PSession extends EventEmitter {
     pkt.writeUInt32BE(0, 40)     // Receiving rate (bytes/s)
 
     if (this.srtAckNumber <= 5 || this.srtAckNumber % 50 === 0) {
-      console.log(`[SRT-ACK] #${this.srtAckNumber - 1} ackSeq=${lastRecvSeq + 1} peerSocket=0x${(this.srtPeerSocketId ?? 0).toString(16)} dataCount=${this.srtDataCount}`)
+      log.info(`[SRT-ACK] #${this.srtAckNumber - 1} ackSeq=${lastRecvSeq + 1} peerSocket=0x${(this.srtPeerSocketId ?? 0).toString(16)} dataCount=${this.srtDataCount}`)
     }
     this.sendToDevice(pkt)
   }
@@ -1218,13 +1224,22 @@ export class P2PSession extends EventEmitter {
     // Prefer punched peer address (from 0x0C00) over config address
     const ip = this.devicePeerIp ?? this.config.devicePublicIp
     const port = this.devicePeerPort ?? this.config.devicePublicPort
-    console.log(`[P2P] send ${data.length}B to ${ip}:${port} type=0x${data.length >= 2 ? data.readUInt16BE(0).toString(16) : '??'}`)
+    log.trace('p2p send', {
+      'net.direction': 'send',
+      'net.bytes': data.length,
+      'net.peer': `${ip}:${port}`,
+      'p2p.type': data.length >= 2 ? `0x${data.readUInt16BE(0).toString(16)}` : 'unknown',
+    })
     this.socket.send(data, port, ip)
   }
 
   private sendTo(data: Buffer, port: number, host: string): void {
     if (!this.socket) return
-    console.log(`[P2P] send ${data.length}B to ${host}:${port}`)
+    log.trace('p2p send', {
+      'net.direction': 'send',
+      'net.bytes': data.length,
+      'net.peer': `${host}:${port}`,
+    })
     this.socket.send(data, port, host)
   }
 
