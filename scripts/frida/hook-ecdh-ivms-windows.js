@@ -52,7 +52,8 @@ var CTX_CLIENT_PRIV = 0x609;   // client private key (PEM, set by SetPBKeyAndPRK
 var mod = null;
 var out = null;
 var sessionId = 0;
-var aesBlockCalls = 0;         // throttle per-block AES logging
+var AES_BLOCK_BUDGET = 16;     // max AES-block logs per session (reset on each GenerateMasterKey)
+var aesBlockCalls = 0;         // throttle per-block AES logging (reset per session)
 
 function openLog() {
   try { out = new File(OUT_FILE, 'a'); } catch (e) { out = null; }
@@ -140,6 +141,7 @@ function attachExports() {
       this.serverPub = args[0];
       this.out = args[1];
       // serverPub is a 91B SPKI/DER blob (starts 30 59 30 13 06 07 2a 86 48 ce 3d ...)
+      aesBlockCalls = 0;   // new ECDH session → refresh the AES-block logging budget
       log('GenerateMasterKey: serverPub(91B)=' + hex(this.serverPub, 91));
       // dump stored client keys from the global session ctx if reachable
       var ctxPtrPtr = mod.base.add(0x47940);           // DAT_180047940
@@ -147,8 +149,9 @@ function attachExports() {
         var ctx = ctxPtrPtr.readPointer();
         if (!ctx.isNull()) {
           log('GenerateMasterKey: ctx.clientPub(91B)=' + hex(ctx.add(CTX_CLIENT_PUB), 91));
+          // client priv is 121B (0x79) SEC1/DER on this build (NOT 128B PEM) — read exactly 0x79
           var pem = readPem(ctx.add(CTX_CLIENT_PRIV), 512);
-          log('GenerateMasterKey: ctx.clientPriv=' + (pem || hex(ctx.add(CTX_CLIENT_PRIV), 128)));
+          log('GenerateMasterKey: ctx.clientPriv=' + (pem || hex(ctx.add(CTX_CLIENT_PRIV), 0x79)));
         }
       } catch (e) {}
     },
@@ -200,11 +203,13 @@ function attachInternals() {
     },
   });
 
-  // FUN_180016a60(drbgCtx, providedData48) — CTR_DRBG_Update; first call after master key = instantiate
+  // FUN_180016a60(drbgCtx, providedData48) — CTR_DRBG_Update; first call after master key = instantiate.
+  // The 16-byte counter V occupies ctx[0x00..0x0F] (big-endian: MSB at +0x00, LSB/increment byte at
+  // +0x0F), so hex(ctx,16) is the full V. AES key schedule for the DRBG lives at ctx+0x28.
   tryAttach(RVA.FUN_drbgUpdate, 'drbgUpdate', {
     onEnter: function (args) {
       this.ctx = args[0];
-      log('CTR_DRBG_Update: V-before(16B)=' + hex(this.ctx, 16) +
+      log('CTR_DRBG_Update: V-before(16B @ ctx[0:16], LSB@+0x0F)=' + hex(this.ctx, 16) +
           ' providedData(48B)=' + hex(args[1], 48));
     },
     onLeave: function () {
@@ -237,11 +242,13 @@ function attachInternals() {
     },
   });
 
-  // FUN_180009cd0(aesCtx, in16, out16) — AES block; log only the first few per process (verbose)
+  // FUN_180009cd0(aesCtx, in16, out16) — AES block (used by init/keygen/DRBG AND the off-11 wrap).
+  // The budget is reset per session (in GenerateMasterKey.onEnter) so early init/keygen AES calls
+  // don't starve the wrap/session-key blocks; logs up to AES_BLOCK_BUDGET blocks per session.
   tryAttach(RVA.FUN_aesBlock, 'aesBlock', {
     onEnter: function (args) { this.in = args[1]; this.out = args[2]; },
     onLeave: function () {
-      if (aesBlockCalls < 12) {
+      if (aesBlockCalls < AES_BLOCK_BUDGET) {
         aesBlockCalls++;
         log('AES-block #' + aesBlockCalls + ' in=' + hex(this.in, 16) + ' out=' + hex(this.out, 16));
       }

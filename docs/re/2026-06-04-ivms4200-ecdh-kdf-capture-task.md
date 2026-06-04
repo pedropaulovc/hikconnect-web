@@ -2,8 +2,11 @@
 
 **For:** a separate Claude Code instance running on a **Windows** host with iVMS-4200 installed.
 **Created:** 2026-06-04 (handoff from the Linux/WSL dev host — you do NOT share its chat context, so this doc is self-contained).
-**Status:** DONE (2026-06-04). Full relay crypto reverse-engineered + key vectors byte-verified.
-Deliverable: **`docs/re/ecdh-kdf-vectors.md`**. Results summary appended below (§11).
+**Status:** RE COMPLETE / impl pending (2026-06-04). Relay crypto fully reverse-engineered; all four
+packet primitives (ECDH P-256, AES-256-ECB wrap, ChaCha20 body, HMAC-SHA256) **independently
+byte-verified vs Python**. NOT yet done: capturing one full `EncECDHReqPackage` packet end-to-end
+(the DLL export couldn't be driven — session-tree state), and the TS impl + live `0x2715` re-test
+(Linux side). Deliverable: **`docs/re/ecdh-kdf-vectors.md`**. Results summary appended below (§11).
 
 ---
 

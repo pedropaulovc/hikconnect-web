@@ -62,10 +62,20 @@ type: project
 
 ### Remaining — ECDH for Relay/VTM
 
-15. **ECDH custom KDF** — Relay and VTM paths need ECDH P-256 handshake. The packet structure works (relay accepts, returns response) but the KDF uses a custom Matyas-Meyer-Oseas hash + SHA-256 DRBG (confirmed from ecdhCryption.dll RE). Relay returns error 0x2715.
-    - **Frida capture (2026-03-18):** See `docs/re/ecdh-frida-capture.md`. ECDH is NOT triggered for device L38239367 (`udpEcdh=0`, `vtduServerPublicKey` all zeros). Complete InitParam structure captured. The Java API surface is fully mapped: `NativeApi.generateECDHKey()`, `setClientECDHKey()`, `enableStreamClientCMDEcdh()`.
-    - To get test vectors, need: (a) device with ECDH enabled, (b) ARM64 emulator for native Frida hooks, or (c) iVMS-4200 Windows with Frida hooking ecdhCryption.dll
-    - **(c) is specced as a standalone handoff task** for a Windows Claude instance: `docs/re/2026-06-04-ivms4200-ecdh-kdf-capture-task.md`. Closing this item depends on the vectors it produces (`docs/re/ecdh-kdf-vectors.md`).
+15. **ECDH for Relay/VTM** — RE COMPLETE (2026-06-04), TS impl pending. The earlier "custom MMO +
+    SHA-256 DRBG KDF" guess was **wrong**: there is no secret→sessionKey KDF. `GenerateSessionKey`
+    emits a *random* session key; the secret-binding is the packet crypto in `EncECDHReqPackage`
+    (AES-256-ECB wrap of the random key with the shared secret + ChaCha20 body + HMAC-SHA256). All
+    four primitives byte-verified vs Python. Full spec + vectors: **`docs/re/ecdh-kdf-vectors.md`**.
+    - **Remaining:** wire `relay-client.ts` / `vtm-client.ts` to the verified construction (ECDH→S,
+      random K, off-11 = AES-256-ECB(S).encrypt(K), body = ChaCha20(K, ctr0, nonce {1,0,0}),
+      MAC = HMAC-SHA256(S, "%u%u"%(crc32(body),crc32(header)))), then re-test relay `0x2715`. A full
+      end-to-end `EncECDHReqPackage` packet wasn't captured (export couldn't be driven — session-tree
+      state); recommended final regression: capture one real packet via the hook script and diff.
+    - **Windows RE method** (`docs/re/2026-06-04-ivms4200-ecdh-kdf-capture-task.md`): drove the DLL's
+      exported pipeline in-process via Frida `NativeFunction` (live relay handshake couldn't be forced).
+    - Prior Android note (`docs/re/ecdh-frida-capture.md`): ECDH not triggered for device L38239367
+      (`udpEcdh=0`, zero `vtduServerPublicKey`); Java API surface mapped.
 
 ### Remaining — Integration
 
