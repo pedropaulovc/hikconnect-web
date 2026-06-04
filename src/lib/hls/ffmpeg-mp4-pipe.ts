@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { once } from 'node:events'
+import { log } from '../telemetry/log'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import type { VideoSink } from './video-sink'
@@ -102,19 +103,19 @@ export class FfmpegMp4Pipe implements VideoSink {
     })
 
     this.process.on('error', (err) => {
-      console.error('[ffmpeg-mp4] error:', err)
+      log.error(`[ffmpeg-mp4] error: ${err.message}`)
     })
 
     // FFmpeg exiting mid-write surfaces as an async EPIPE on stdin — swallow it
     // so it can't crash the server.
     this.process.stdin?.on('error', (err) => {
-      console.error('[ffmpeg-mp4] stdin error (FFmpeg likely exited):', err.message)
+      log.error(`[ffmpeg-mp4] stdin error (FFmpeg likely exited): ${err.message}`)
     })
 
     this.process.stderr?.on('data', (data: Buffer) => {
       const line = data.toString().trim()
       if (!line) return
-      console.log('[ffmpeg-mp4]', line)
+      log.info(`[ffmpeg-mp4] ${line}`)
       const s = parseFfmpegProgressSeconds(line)
       if (s !== null) this._progress = s
     })
