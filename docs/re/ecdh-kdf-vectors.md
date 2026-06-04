@@ -84,8 +84,10 @@ Fixed overhead = 11 + 32 + 91 + 32 = **166 bytes** (matches task doc).
   path `param2 = {1,0,0}` ⇒ **counter=0, nonce words {1,0,0}**, i.e. the 16-byte `cryptography`
   nonce = `00000000 01000000 00000000 00000000`. **VERIFIED** byte-for-byte vs Python ChaCha20 — see
   vectors below.
-- **MAC:** `crcB = CRC32(body)`, `crcH = CRC32(header[0:0x86])`; `msg = sprintf("%u%u", crcB, crcH)`
-  (ASCII decimal concatenation, NUL-padded in a 0x20 buffer); then `FUN_180011fa0(mac, &DESC@0x18003e3f0, 1)`,
+- **MAC:** `crcH = CRC32(header[0:0x86])`, `crcB = CRC32(body)`; `msg = sprintf("%u%u", crcH, crcB)`
+  (**header crc first, then body crc** — confirmed from disasm: `sprintf_s(buf,0x20,"%u%u",
+  R9D=crcHeader, [rsp+0x20]=crcBody)`; ASCII decimal concat, NUL-padded in a 0x20 buffer); then
+  `FUN_180011fa0(mac, &DESC@0x18003e3f0, 1)`,
   `FUN_1800124b0(mac, S, 0x20)` (**MAC key = shared secret, 32B**), finalize `FUN_180012610` → **32B
   MAC** appended. `FUN_1800124b0` is **textbook HMAC** (ipad `0x36` / opad `0x5c`); the hash dispatcher
   `FUN_180012130` case 6 uses the canonical SHA-256 IV (`6a09e667…5be0cd19`) and the output is 32B ⇒
@@ -162,8 +164,10 @@ forced): `scripts/frida/hook-ecdh-ivms-windows.js`.
   `wrapSessionKey` = AES-256-ECB(S), ChaCha20 body, `crc32`, HMAC-SHA256 MAC over `"%u%u"`. Unit
   tests (`crypto-ecdh.test.ts`) reproduce the ECDH/wrap/ChaCha20 vectors byte-for-byte; CRC-32 check
   value matches.
-- ⏳ Re-test the live relay for `0x2715`. Only unverified assembly detail: the `"%u%u"` arg order
-  (crc32(body) vs crc32(header) first) — diff one real captured packet to confirm.
+- ✅ MAC `"%u%u"` arg order confirmed from `FUN_180002b30` disasm: **crc32(header) first, then
+  crc32(body)**.
+- ⏳ Re-test the live relay for `0x2715` (every byte of the construction is now verified or
+  disasm-confirmed; an end-to-end captured packet would be a final regression but isn't required).
 
 > Note: the live relay/VTM handshake could not be force-triggered from iVMS (direct P2P kept winning;
 > a full outbound-UDP block on Video.C broke P2P signaling rather than falling back to the
