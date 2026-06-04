@@ -1,0 +1,6 @@
+#!/bin/bash
+
+# After a pull/merge, warn (don't block) if package-lock.json drifted from the
+# installed deps — so you reinstall before a cryptic ERR_MODULE_NOT_FOUND at
+# `npm run dev`. The same check hard-fails predev/prebuild; here it only nudges.
+node scripts/check-deps.mjs || true
