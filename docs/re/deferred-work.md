@@ -71,11 +71,13 @@ type: project
       `wrapSessionKey` = AES-256-ECB(S), ChaCha20 body, HMAC-SHA256 MAC over the CRC-32 `"%u%u"`
       string) and `relay-client.ts` wired to it. Unit tests reproduce the captured ECDH/wrap/ChaCha20
       vectors byte-for-byte (`crypto-ecdh.test.ts`).
-    - **Remaining:** re-test the live relay for `0x2715`. Every byte of the construction is now
-      verified or disasm-confirmed (the `"%u%u"` MAC arg order = crc32(header) then crc32(body), from
-      `FUN_180002b30` disasm). A full end-to-end `EncECDHReqPackage` capture would be a nice final
-      regression but isn't required (it couldn't be driven in-process — the session-tree lookup
-      rejects a synthetic session id).
+    - **Live relay still `0x2715`** (`scripts/test-relay-connect.ts` against the VTM, which presents a
+      pubkey). The ECDH crypto + packet assembly now match the DLL disassembly byte-for-byte (incl. the
+      8-byte HMAC-update truncation and crc32(header)-first order), so the remaining cause is most
+      likely the **`ClnConnectReq` body content**: the TLV body in `relay-client.ts` is from
+      `libCASClient.dll` RE (different DLL) and may be wrong for the ECDH relay path. **Next step:** RE
+      `OpenNetStream.dll`'s `SendClnConnectReq` (the real caller of `EncECDHReqPackage`) to capture the
+      exact plaintext body it builds, then diff against `relay-client.ts`.
     - **Windows RE method** (`docs/re/2026-06-04-ivms4200-ecdh-kdf-capture-task.md`): drove the DLL's
       exported pipeline in-process via Frida `NativeFunction` (live relay handshake couldn't be forced).
     - Prior Android note (`docs/re/ecdh-frida-capture.md`): ECDH not triggered for device L38239367
