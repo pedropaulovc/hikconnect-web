@@ -1,0 +1,41 @@
+# Build artifacts & deps (re-created in the image)
+node_modules
+.next
+out
+*.tsbuildinfo
+
+# Secrets — credentials are supplied at runtime, never baked into the image
+.env*
+!.env.local.example
+
+# VCS / tooling
+.git
+.github
+.husky
+.claude
+.gemini
+.mcp.json
+
+# Tests & fixtures (not needed to build the app)
+**/__tests__
+**/*.test.ts
+e2e
+spec
+coverage
+test-results
+playwright-report
+.playwright-cli
+.playwright-mcp
+playwright.config.ts
+vitest.config.ts
+
+# Reverse-engineering material & docs (large, unused at runtime)
+docs
+native
+scripts/frida
+*.pcap
+*.xapk
+
+# Logs
+*.log
+npm-debug.log*
