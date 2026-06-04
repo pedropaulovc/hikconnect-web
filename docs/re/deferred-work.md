@@ -109,13 +109,18 @@ type: project
          for the crypto vectors) to capture the plaintext body *before* ChaCha20 — **this never needs
          iVMS to actually relay**, which is exactly why it sidesteps the dynamic-capture dead-end.
          Diff the result against `relay-client.ts`.
-      3. **Last resort — symmetric NAT.** Only if the body-builder reads live socket/session state
-         that can't be synthesized in-process. It is the highest-effort, least-certain path: it rests
-         on the *unverified* assumption that iVMS relays under symmetric NAT (blunt UDP firewalling
-         did not). If forced down this road, prefer a **cloud NAT Gateway** (Azure/AWS — symmetric by
-         definition, zero tuning) over Linux `iptables MASQUERADE --random-fully`; verify the NAT type
-         with `pystun3` and confirm iVMS opens TCP to `148.153.53.29:8554` + an ECDH handshake before
-         trusting it.
+      3. **Last resort — symmetric NAT.** ⚠️ **Tested and discouraged.** The premise — that iVMS relays
+         under symmetric NAT — now has direct counter-evidence: an **inbound-UDP block** on Video.C
+         (drops the device's hole-punch while leaving outbound + TCP signaling alive — the "inbound
+         hole-punch fails" half of symmetric NAT) was tried (2026-06-04) and iVMS **did NOT fall back
+         to the ECDH relay** — it only emitted `CreateSession` (no `GenerateMasterKey`/
+         `EncECDHReqPackage`), same as a normal P2P preview, then failed/retried P2P. Combined with the
+         crypto being proven correct and the device's zero `vtduServerPublicKey`, the conclusion is
+         that **device L38239367 is simply not provisioned for the ECDH relay** — iVMS never does that
+         handshake for it, by any forcing. A full cloud NAT Gateway would very likely behave the same.
+         The real lever is **provisioning** (enable "Image and Video Encryption" in Hik-Connect →
+         re-check whether `vtduServerPublicKey` flips non-zero) or a **different, ECDH-provisioned
+         device/account**, not NAT manipulation.
     - **Windows RE method** (`docs/re/2026-06-04-ivms4200-ecdh-kdf-capture-task.md`): drove the DLL's
       exported pipeline in-process via Frida `NativeFunction` (live relay handshake couldn't be forced).
     - Prior Android note (`docs/re/ecdh-frida-capture.md`): ECDH not triggered for device L38239367
