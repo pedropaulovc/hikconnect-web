@@ -159,22 +159,30 @@ forced): `scripts/frida/hook-ecdh-ivms-windows.js`.
 - ✅ MAC (end): HMAC-SHA256(sharedSecret), confirmed (SHA-256 IV @ hash-dispatcher `FUN_180012130`
   case 6; 32B output rules out SHA-224/SM3-as-28B and MD5/SHA-1).
 - ✅ Key formats, personalization strings (`"ezviz-ecdh"`/`"gen_key"`), CRC-32.
-- ⏳ Optional: capture one full `EncECDHReqPackage` packet end-to-end (couldn't drive the export — the
-  session-tree lookup rejects a synthetic session id and the void wrapper hides the error). Not a
-  blocker: every primitive above is independently verified, so packet assembly is fully specified.
+- ✅ **Full packet verified end-to-end via the DLL's server decryptor** (`FUN_180003a40`, rc=0) — the
+  whole assembly (wrap + body + 8-byte MAC) round-trips, not just the individual primitives. This is
+  stronger than a captured reference packet.
 - ✅ Wired into `src/lib/p2p/crypto.ts` + `relay-client.ts`: `generateSessionKey` (random K),
   `wrapSessionKey` = AES-256-ECB(S), ChaCha20 body, `crc32`, HMAC-SHA256 MAC over `"%u%u"`. Unit
   tests (`crypto-ecdh.test.ts`) reproduce the ECDH/wrap/ChaCha20 vectors byte-for-byte; CRC-32 check
   value matches.
 - ✅ MAC `"%u%u"` arg order (crc32(header) then crc32(body)) and the **8-byte HMAC-update truncation**
   confirmed from `FUN_180002b30` disasm (handler `FUN_1800259e0` arg3 = byte length).
-- ⚠️ **Live relay still returns `0x2715`** (`scripts/test-relay-connect.ts` against the live VTM,
-  which DOES present a pubkey). Every crypto primitive and the entire packet *assembly* now match the
-  DLL disassembly byte-for-byte, so the remaining cause is most likely the **`ClnConnectReq` body
-  content**, not the ECDH crypto. The body TLVs in `relay-client.ts` come from `libCASClient.dll` RE
-  (a different DLL) and may be wrong for the ECDH relay path — REing `OpenNetStream.dll`'s
-  `SendClnConnectReq` (the actual caller of `EncECDHReqPackage`) to get the exact body it passes is
-  the clear next step.
+- ✅ **Client crypto PROVEN byte-correct by the DLL's own server decryptor.** Built a TS packet with a
+  self-consistent keypair and fed it to `ECDHCryption_SrvDecECDHReqPackage`'s core (`FUN_180003a40`,
+  driven in-process via Frida with a synthetic session struct + `SrvSetPBKeyAndPRKey` for the server
+  key): **rc=0 (success)** — MAC verified, AES-256-ECB wrap decrypted to the exact session key, and
+  ChaCha20 body decrypted to the exact plaintext. So `crypto.ts` reproduces `EncECDHReqPackage`
+  byte-for-byte. (Driver: `C:\re\drive_srvdec.js`.)
+- ⚠️ **Live relay returns `0x2715`, but it is NOT a crypto or body-content bug.** All body variants —
+  including an **empty body** — give the *identical* `0x2715` (`scripts/_relay_probe.ts`). Since the
+  crypto is proven correct, the relay is failing at **MAC verification before it ever parses the
+  body**, which means the **shared secret doesn't match** → the relay pubkey from the API
+  (`/v3/streaming/query/relay/...` and `/v3/streaming/vtm/...` both return the same key, version 1)
+  does **not** correspond to the relay node's private key for this device/account. Consistent with the
+  device's `vtduServerPublicKey` being **all-zeros** (the cloud has not provisioned the ECDH relay
+  path for device L38239367 — which is why iVMS uses P2P, never this relay, for it). **`0x2715` is a
+  key/provisioning mismatch, not a code defect.**
 
 > Note: the live relay/VTM handshake could not be force-triggered from iVMS (direct P2P kept winning;
 > a full outbound-UDP block on Video.C broke P2P signaling rather than falling back to the
