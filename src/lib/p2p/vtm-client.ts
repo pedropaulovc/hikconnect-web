@@ -7,6 +7,7 @@
 
 import { Socket } from 'node:net'
 import { EventEmitter } from 'node:events'
+import { log } from '../telemetry/log'
 
 // -- Protobuf helpers (hand-encoded, no library needed) --
 
@@ -148,7 +149,7 @@ export class VtmClient extends EventEmitter {
       socket.once('connect', () => {
         clearTimeout(timeout)
         this.state = 'connected'
-        console.log(`[VTM] Connected to ${this.config.host}:${this.config.port}`)
+        log.info(`[VTM] Connected to ${this.config.host}:${this.config.port}`)
         resolve()
       })
 
@@ -176,7 +177,12 @@ export class VtmClient extends EventEmitter {
     const payload = encodeStreamInfoReq(params)
     const frame = encodeVtmFrame(0, VtmMsgType.STREAM_INFO_REQ, payload)
     this.sendRaw(frame)
-    console.log(`[VTM] Sent StreamInfoReq (${payload.length}B payload, subType=0x${VtmMsgType.STREAM_INFO_REQ.toString(16)})`)
+    log.trace('vtm send', {
+      'net.direction': 'send',
+      'net.bytes': payload.length,
+      'vtm.msg': 'StreamInfoReq',
+      'vtm.subType': VtmMsgType.STREAM_INFO_REQ,
+    })
   }
 
   sendRaw(data: Buffer): void {
@@ -212,7 +218,12 @@ export class VtmClient extends EventEmitter {
         return // need more data
       }
 
-      console.log(`[VTM] Recv frame type=${frame.msgType} subType=${frame.subType} len=${frame.payload.length}`)
+      log.trace('vtm recv', {
+        'net.direction': 'recv',
+        'net.bytes': frame.payload.length,
+        'vtm.msgType': frame.msgType,
+        'vtm.subType': frame.subType,
+      })
       this.emit('frame', frame)
 
       this.recvBuf = Buffer.from(this.recvBuf.subarray(frame.totalLen))

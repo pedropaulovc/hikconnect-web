@@ -85,10 +85,24 @@ Client                    P2P Server (52.x:6000)      Device (NVR)
 
 - **Runtime:** Node.js 25, TypeScript strict
 - **Framework:** Next.js 16 (App Router)
-- **Testing:** Vitest (239 tests passing, 1 skipped)
+- **Testing:** Vitest (356 tests passing, 1 skipped)
 - **Video:** FFmpeg H.265→H.264 transcode to HLS (NVDEC+NVENC full-res on GPU, libx264 downscale fallback), HLS.js (browser playback)
 - **Crypto:** Node.js native crypto (AES, ChaCha20, ECDH, HMAC)
+- **Logging:** OpenTelemetry Logs (`@opentelemetry/sdk-logs`) via the `log` facade in `src/lib/telemetry/`. OTLP exporter when an endpoint is configured, console exporter otherwise. No raw `console.*` in `src/`.
 - **RE tools:** Frida (Android hooking), Ghidra (binary decompilation), tcpdump
+
+### Logging
+
+All `src/` code logs through `import { log } from '@/lib/telemetry/log'` —
+`log.{trace,debug,info,warn,error}(body, attributes?)`, emitted as OTel `LogRecord`s.
+Per-packet P2P/VTM/relay **send/recv** events are `log.trace` with structured attributes
+(`net.direction`, `net.bytes`, `net.peer`, `p2p.type`). The SDK inits via `instrumentation.ts`
+(Next server) and lazily on first log in standalone `tsx` scripts — no explicit setup needed.
+
+Env vars (all optional):
+- `OTEL_LOG_LEVEL` — min severity emitted: `trace|debug|info|warn|error`. **Default `info`** → per-packet send/recv stay hidden. Set `OTEL_LOG_LEVEL=trace` to see them.
+- `OTEL_EXPORTER_OTLP_ENDPOINT` (or `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`) — when set, logs export via OTLP/protobuf to that collector; otherwise the console exporter prints them.
+- `OTEL_SERVICE_NAME` — resource service name (default `hikconnect-web`).
 
 ## Commands
 
@@ -96,7 +110,7 @@ Client                    P2P Server (52.x:6000)      Device (NVR)
 npm run dev          # Start dev server
 npm run build        # Production build
 npm run typecheck    # TypeScript check (ignore scripts/test-e2e-stream.ts errors)
-npm test -- --run    # Run all tests (239 pass, 1 skipped)
+npm test -- --run    # Run all tests (356 pass, 1 skipped)
 ```
 
 ### Protocol Testing

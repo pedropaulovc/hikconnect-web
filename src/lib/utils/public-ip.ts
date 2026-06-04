@@ -4,6 +4,8 @@
  * Result is cached for the process lifetime.
  */
 
+import { log } from '../telemetry/log'
+
 let cachedIp: string | null = null
 
 export async function getPublicIp(): Promise<string> {
@@ -16,7 +18,7 @@ export async function getPublicIp(): Promise<string> {
     cachedIp = data.ip
     return cachedIp
   } catch {
-    console.warn('[PublicIP] Failed to detect public IP, using 0.0.0.0')
+    log.warn('[PublicIP] Failed to detect public IP, using 0.0.0.0')
     return '0.0.0.0'
   }
 }

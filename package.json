@@ -17,13 +17,18 @@
     "prepare": "node -e \"process.env.MSYS_NO_PATHCONV='1';import('husky').then(m=>process.stdout.write(m.default()))\" --input-type=module"
   },
   "dependencies": {
+    "@opentelemetry/api-logs": "^0.218.0",
+    "@opentelemetry/exporter-logs-otlp-proto": "^0.218.0",
+    "@opentelemetry/resources": "^2.7.1",
+    "@opentelemetry/sdk-logs": "^0.218.0",
+    "@opentelemetry/semantic-conventions": "^1.41.1",
     "hls.js": "^1.6.16",
     "next": "16.1.6",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
   },
   "devDependencies": {
-    "@eslint/js": "^10.0.1",
+    "@eslint/js": "^9.32.0",
     "@playwright/test": "^1.60.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",

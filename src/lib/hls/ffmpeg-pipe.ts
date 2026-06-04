@@ -1,5 +1,6 @@
 import { spawn, ChildProcess, execFileSync } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
+import { log } from '../telemetry/log'
 import { join } from 'node:path'
 import type { VideoSink } from './video-sink'
 
@@ -38,7 +39,7 @@ function detectEncoder(): EncoderMode {
   } catch {
     cachedEncoder = 'libx264'
   }
-  console.log(`[ffmpeg] transcode backend: ${cachedEncoder}`)
+  log.info(`[ffmpeg] transcode backend: ${cachedEncoder}`)
   return cachedEncoder
 }
 
@@ -161,19 +162,19 @@ export class FfmpegHlsPipe implements VideoSink {
     })
 
     this.process.on('error', (err) => {
-      console.error('FFmpeg error:', err)
+      log.error(`FFmpeg error: ${err.message}`)
     })
 
     // If FFmpeg exits, in-flight writes to its stdin surface as an async EPIPE
     // 'error' event — swallow it so an unhandled error can't crash the server.
     this.process.stdin?.on('error', (err) => {
-      console.error('[ffmpeg] stdin error (FFmpeg likely exited):', err.message)
+      log.error(`[ffmpeg] stdin error (FFmpeg likely exited): ${err.message}`)
     })
 
     this.process.stderr?.on('data', (data: Buffer) => {
       // FFmpeg logs to stderr
       const line = data.toString().trim()
-      if (line) console.log('[ffmpeg]', line)
+      if (line) log.info(`[ffmpeg] ${line}`)
     })
   }
 

@@ -21,6 +21,7 @@
  */
 
 import { EventEmitter } from 'node:events'
+import { log } from '../telemetry/log'
 
 const HIK_RTP_HEADER_LEN = 12
 const SUB_HEADER_LEN = 13 // 0x0d + 4 bytes + 8 bytes sync
@@ -185,7 +186,7 @@ export class HikRtpExtractor extends EventEmitter {
         0: 'TRAIL_N', 1: 'TRAIL_R', 19: 'IDR_W_RADL', 20: 'IDR_N_LP',
         21: 'CRA_NUT', 32: 'VPS', 33: 'SPS', 34: 'PPS',
       }
-      console.log(`[H265] NAL #${this.nalCount}: type=${nalType} (${names[nalType] ?? '?'}) size=${data.length}B`)
+      log.info(`[H265] NAL #${this.nalCount}: type=${nalType} (${names[nalType] ?? '?'}) size=${data.length}B`)
     }
   }
 }
