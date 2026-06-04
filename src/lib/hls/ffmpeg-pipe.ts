@@ -25,10 +25,15 @@ export type HlsConfig = {
  * Transcode backend. 'nvenc' = full-resolution GPU pipeline (NVDEC decode +
  * NVENC encode, zero-copy on the GPU) — serves the native source (main 4K,
  * sub 640×480). 'libx264' = CPU fallback that downscales (realtime 4K H.264 on
- * CPU is infeasible). Detected once and cached: requires both hevc_cuvid
- * (decode) and h264_nvenc (encode) in the local ffmpeg.
+ * CPU is infeasible). 'passthrough' = stream-copy the source HEVC into fMP4 HLS,
+ * no decode/encode at all — near-zero CPU, but the browser must support HEVC
+ * (Safari natively; Chrome only with a hardware HEVC decoder). Detected once
+ * and cached: requires both hevc_cuvid (decode) and h264_nvenc (encode).
  */
-export type EncoderMode = 'nvenc' | 'libx264'
+export type EncoderMode = 'nvenc' | 'libx264' | 'passthrough'
+
+const ENCODER_MODES: readonly EncoderMode[] = ['nvenc', 'libx264', 'passthrough']
+
 let cachedEncoder: EncoderMode | null = null
 function detectEncoder(): EncoderMode {
   if (cachedEncoder) return cachedEncoder
@@ -44,9 +49,21 @@ function detectEncoder(): EncoderMode {
 }
 
 /**
- * Build the FFmpeg argv for the HLS transcode. Pure function (no I/O) so the
- * two backends can be regression-tested. All streams transcode H.265→H.264
- * because browsers don't support H.265 in HLS.
+ * The backend to use: an explicit `HLS_ENCODER` env override (set to
+ * `passthrough` in the GPU-less cloud deployment) wins; otherwise auto-detect.
+ * An unknown override value is ignored so a typo can't silently break streaming.
+ */
+export function resolveEncoder(): EncoderMode {
+  const override = process.env.HLS_ENCODER as EncoderMode | undefined
+  if (override && ENCODER_MODES.includes(override)) return override
+  return detectEncoder()
+}
+
+/**
+ * Build the FFmpeg argv for the HLS output. Pure function (no I/O) so every
+ * backend can be regression-tested. 'nvenc'/'libx264' transcode H.265→H.264
+ * (broadest browser support); 'passthrough' stream-copies the source HEVC into
+ * fMP4 HLS for HEVC-capable browsers (near-zero CPU, no GPU).
  */
 export function buildHlsFfmpegArgs(
   encoder: EncoderMode,
@@ -70,6 +87,35 @@ export function buildHlsFfmpegArgs(
     '-hls_segment_filename', join(outputDir, 'seg_%03d.ts'),
     playlistPath,
   ]
+
+  if (encoder === 'passthrough') {
+    // Stream-copy the source HEVC straight into HLS — no decode, no encode,
+    // no scale (native main 4K / sub 640×480). HEVC needs fMP4 segments tagged
+    // 'hvc1' (MPEG-TS HLS can't carry HEVC for browsers); ffmpeg cuts segments
+    // on source keyframes, so -hls_time is a target, not exact.
+    return [
+      '-probesize', '500000',
+      '-analyzeduration', '2000000',
+      '-err_detect', 'ignore_err',
+      ...inputArgs,
+      '-c:v', 'copy',
+      '-tag:v', 'hvc1',
+      // The raw `-f hevc` demuxer leaves VPS/SPS/PPS only in-band — codec
+      // extradata stays empty, so a plain stream-copy writes an EMPTY hvcC box
+      // and HLS.js/MSE has no decoder-config record to start the HEVC decoder.
+      // hevc_metadata re-parses the parameter sets into extradata so the mov
+      // muxer emits a populated hvcC. Without it the 4K stream never plays.
+      '-bsf:v', 'hevc_metadata',
+      '-f', 'hls',
+      '-hls_time', String(segDuration),
+      '-hls_list_size', '10',
+      '-hls_flags', 'delete_segments+append_list',
+      '-hls_segment_type', 'fmp4',
+      '-hls_fmp4_init_filename', 'init.mp4',
+      '-hls_segment_filename', join(outputDir, 'seg_%03d.m4s'),
+      playlistPath,
+    ]
+  }
 
   if (encoder === 'nvenc') {
     // Full-resolution GPU pipeline: NVDEC decodes the H.265 and NVENC encodes
@@ -180,7 +226,7 @@ export class FfmpegHlsPipe implements VideoSink {
 
   private buildFfmpegArgs(quality: StreamQuality, segDuration: number): string[] {
     return buildHlsFfmpegArgs(
-      detectEncoder(),
+      resolveEncoder(),
       quality,
       segDuration,
       this.config.outputDir,
