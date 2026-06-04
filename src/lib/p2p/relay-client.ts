@@ -19,7 +19,7 @@ import { log } from '../telemetry/log'
 import {
   generateKeyPair,
   deriveSharedSecret,
-  ecdhDeriveSessionKey,
+  generateSessionKey,
   buildEcdhReqPacket,
   spkiPublicKeyToRaw,
 } from './crypto'
@@ -258,8 +258,9 @@ export class RelayClient extends EventEmitter {
     const masterKey = deriveSharedSecret(clientKp.privateKey, serverPubKeyRaw)
     log.info(`[Relay] ECDH master key: ${masterKey.toString('hex').substring(0, 20)}...`)
 
-    // 4. Derive session key via AES-ECB counter KDF
-    const sessionKey = ecdhDeriveSessionKey(masterKey, 32)
+    // 4. Generate a fresh RANDOM session key (the DLL's GenerateSessionKey is random, not a KDF;
+    //    the server recovers it by AES-256-ECB-decrypting the off-11 wrap with the shared secret)
+    const sessionKey = generateSessionKey()
     log.info(`[Relay] Session key: ${sessionKey.toString('hex').substring(0, 20)}...`)
 
     // 5. Build ECDH encrypted request packet

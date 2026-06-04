@@ -158,9 +158,12 @@ forced): `scripts/frida/hook-ecdh-ivms-windows.js`.
 - ⏳ Optional: capture one full `EncECDHReqPackage` packet end-to-end (couldn't drive the export — the
   session-tree lookup rejects a synthetic session id and the void wrapper hides the error). Not a
   blocker: every primitive above is independently verified, so packet assembly is fully specified.
-- ⏳ Wire into `src/lib/p2p/relay-client.ts` / `vtm-client.ts`: ECDH→S, random K, off-11 =
-  AES-256-ECB(S).encrypt(K), body = ChaCha20(K, ctr0, nonce {1,0,0}),
-  MAC = HMAC-SHA256(S, "%u%u"%(crc32(body),crc32(header[0:0x86]))). Then re-test relay `0x2715`.
+- ✅ Wired into `src/lib/p2p/crypto.ts` + `relay-client.ts`: `generateSessionKey` (random K),
+  `wrapSessionKey` = AES-256-ECB(S), ChaCha20 body, `crc32`, HMAC-SHA256 MAC over `"%u%u"`. Unit
+  tests (`crypto-ecdh.test.ts`) reproduce the ECDH/wrap/ChaCha20 vectors byte-for-byte; CRC-32 check
+  value matches.
+- ⏳ Re-test the live relay for `0x2715`. Only unverified assembly detail: the `"%u%u"` arg order
+  (crc32(body) vs crc32(header) first) — diff one real captured packet to confirm.
 
 > Note: the live relay/VTM handshake could not be force-triggered from iVMS (direct P2P kept winning;
 > a full outbound-UDP block on Video.C broke P2P signaling rather than falling back to the

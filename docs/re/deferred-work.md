@@ -67,11 +67,14 @@ type: project
     emits a *random* session key; the secret-binding is the packet crypto in `EncECDHReqPackage`
     (AES-256-ECB wrap of the random key with the shared secret + ChaCha20 body + HMAC-SHA256). All
     four primitives byte-verified vs Python. Full spec + vectors: **`docs/re/ecdh-kdf-vectors.md`**.
-    - **Remaining:** wire `relay-client.ts` / `vtm-client.ts` to the verified construction (ECDH→S,
-      random K, off-11 = AES-256-ECB(S).encrypt(K), body = ChaCha20(K, ctr0, nonce {1,0,0}),
-      MAC = HMAC-SHA256(S, "%u%u"%(crc32(body),crc32(header)))), then re-test relay `0x2715`. A full
-      end-to-end `EncECDHReqPackage` packet wasn't captured (export couldn't be driven — session-tree
-      state); recommended final regression: capture one real packet via the hook script and diff.
+    - **DONE:** `crypto.ts` reimplemented to the verified construction (`generateSessionKey` random K,
+      `wrapSessionKey` = AES-256-ECB(S), ChaCha20 body, HMAC-SHA256 MAC over the CRC-32 `"%u%u"`
+      string) and `relay-client.ts` wired to it. Unit tests reproduce the captured ECDH/wrap/ChaCha20
+      vectors byte-for-byte (`crypto-ecdh.test.ts`).
+    - **Remaining:** re-test the live relay for `0x2715`. The one unverified assembly detail is the
+      `"%u%u"` arg order (crc32(body) vs crc32(header) first) — recommended final regression: capture
+      one real packet via the hook script and diff. A full end-to-end `EncECDHReqPackage` couldn't be
+      driven in-process (the session-tree lookup rejects a synthetic session id).
     - **Windows RE method** (`docs/re/2026-06-04-ivms4200-ecdh-kdf-capture-task.md`): drove the DLL's
       exported pipeline in-process via Frida `NativeFunction` (live relay handshake couldn't be forced).
     - Prior Android note (`docs/re/ecdh-frida-capture.md`): ECDH not triggered for device L38239367
