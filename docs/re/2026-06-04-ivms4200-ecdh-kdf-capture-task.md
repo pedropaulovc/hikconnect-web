@@ -2,7 +2,8 @@
 
 **For:** a separate Claude Code instance running on a **Windows** host with iVMS-4200 installed.
 **Created:** 2026-06-04 (handoff from the Linux/WSL dev host — you do NOT share its chat context, so this doc is self-contained).
-**Status:** NOT STARTED.
+**Status:** DONE (2026-06-04). Full relay crypto reverse-engineered + key vectors byte-verified.
+Deliverable: **`docs/re/ecdh-kdf-vectors.md`**. Results summary appended below (§11).
 
 ---
 
@@ -176,3 +177,39 @@ captured session keys byte-for-byte, wire it into `src/lib/p2p/relay-client.ts` 
 - `docs/re/deferred-work.md` item 15 — the blocker entry this task closes.
 - `scripts/frida/hook-ecdh-*.js` — existing Frida hook style to copy.
 - `src/lib/p2p/relay-client.ts`, `src/lib/p2p/vtm-client.ts` — the consumers that need the session key.
+
+## 11. Results (2026-06-04) — what worked
+
+**Method:** instead of forcing a live relay handshake (which couldn't be triggered — see below), the
+exported ECDH pipeline was **driven directly in-process via Frida `NativeFunction`** with controlled
+keypairs, and outputs were verified against Python `cryptography`. Clean, deterministic, verifiable.
+
+**Key correction:** there is **no secret→sessionKey KDF**. `GenerateSessionKey` emits a *random* 32B
+key (AES-256 CTR_DRBG; proven non-deterministic). The secret-binding lives in `EncECDHReqPackage`:
+- off 11 (32B) = **AES-256-ECB(key = shared secret)** of the random session key — *standard AES,
+  byte-verified*.
+- off 43 (91B) = client SPKI pubkey.
+- off 134 = body **ChaCha20**(key = session key, counter 0, nonce `01 00…`).
+- last 32B = **HMAC**(key = shared secret) over `sprintf("%u%u", crc32(body), crc32(header))`.
+
+**Verified vectors:** 3 ECDH sessions (DLL == independent Python ECDH, byte-for-byte) + the AES-256-ECB
+wrap. Full spec + vectors: `docs/re/ecdh-kdf-vectors.md`.
+
+**Address↔Ghidra mapping (this build, SHA256 `C7768BF8…0B62DB`):** preferred ImageBase
+**0x180000000** confirmed ⇒ `runtime = module.base + (ghidraAddr − 0x180000000)`. The DLL **exports the
+API by name** (`ECDHCryption_*`, 53 exports) so name-based hooking/calling is preferred over RVAs. The
+task's named targets all matched: `GenerateMasterKey`=`FUN_180002130`, `GenerateSessionKey`/KDF=
+`FUN_180016e00`, block fn=`FUN_180009cd0` (AES), cipher-select=`FUN_180011fa0`, packet builder=
+`FUN_180002b30`.
+
+**Cipher/DRBG constants observed:** block cipher = **AES** (T-tables @ `0x46830/46c30/47030/47430`,
+S-box @ `0x456d0`); session-key gen = **AES-256 CTR_DRBG**, personalization **`"ezviz-ecdh"`**, keygen
+DRBG personalization **`"gen_key"`**, 16B counter `V` at `ctx+0x0F` (big-endian inc), seedlen 48
+(=32+16). CRC = **CRC-32** (table @ `0x18003e590`). MAC = **HMAC** (ipad 0x36/opad 0x5c), SHA-256-sized.
+Key formats: pub 91B SPKI/DER, **priv 121B SEC1/DER** (not 128B PEM).
+
+**What could NOT be triggered:** the live VTM/relay ECDH handshake. Normal cloud preview only fired
+`CreateSession` (direct P2P, no relay pubkey); a full outbound-UDP block on `iVMS-4200.Video.C`
+broke P2P *signaling* (stream failed) rather than forcing the ECDH-bearing VTM relay. The in-process
+driver made live triggering unnecessary. Frida hook script for a future live capture:
+`scripts/frida/hook-ecdh-ivms-windows.js`. Drivers: `C:\re\drive_ecdh2.js`, `C:\re\drive_primitives.js`.
