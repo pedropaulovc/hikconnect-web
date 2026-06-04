@@ -15,6 +15,7 @@
 
 import { Socket } from 'node:net'
 import { EventEmitter } from 'node:events'
+import { log } from '../telemetry/log'
 import {
   generateKeyPair,
   deriveSharedSecret,
@@ -181,7 +182,7 @@ export class RelayClient extends EventEmitter {
       socket.once('connect', () => {
         clearTimeout(timeout)
         this.state = 'connected'
-        console.log(`[Relay] Connected to ${this.config.host}:${this.config.port}`)
+        log.info(`[Relay] Connected to ${this.config.host}:${this.config.port}`)
         resolve()
       })
 
@@ -228,7 +229,13 @@ export class RelayClient extends EventEmitter {
     // Unencrypted fallback (may not work with modern relay servers)
     const frame = encodeRelayFrame(RelayCmd.CLN_CONNECT_REQ, ++this.seqNum, body)
     this.sendRaw(frame)
-    console.log(`[Relay] Sent ClnConnectReq unencrypted (${body.length}B body, serial=${this.config.deviceSerial})`)
+    log.trace('relay send', {
+      'net.direction': 'send',
+      'net.bytes': body.length,
+      'relay.msg': 'ClnConnectReq',
+      'relay.encrypted': false,
+      'device.serial': this.config.deviceSerial,
+    })
   }
 
   private sendEcdhConnectReq(body: Buffer): void {
@@ -245,15 +252,15 @@ export class RelayClient extends EventEmitter {
 
     // 2. Generate ephemeral client key pair
     const clientKp = generateKeyPair()
-    console.log(`[Relay] Client ECDH pubkey: ${clientKp.publicKey.toString('hex').substring(0, 40)}...`)
+    log.info(`[Relay] Client ECDH pubkey: ${clientKp.publicKey.toString('hex').substring(0, 40)}...`)
 
     // 3. Compute ECDH shared secret (master key)
     const masterKey = deriveSharedSecret(clientKp.privateKey, serverPubKeyRaw)
-    console.log(`[Relay] ECDH master key: ${masterKey.toString('hex').substring(0, 20)}...`)
+    log.info(`[Relay] ECDH master key: ${masterKey.toString('hex').substring(0, 20)}...`)
 
     // 4. Derive session key via AES-ECB counter KDF
     const sessionKey = ecdhDeriveSessionKey(masterKey, 32)
-    console.log(`[Relay] Session key: ${sessionKey.toString('hex').substring(0, 20)}...`)
+    log.info(`[Relay] Session key: ${sessionKey.toString('hex').substring(0, 20)}...`)
 
     // 5. Build ECDH encrypted request packet
     // From native code: local_200 = 9 (clientType) is used as channelId byte
@@ -271,7 +278,14 @@ export class RelayClient extends EventEmitter {
     this.ecdhSessionKey = sessionKey
 
     this.sendRaw(packet)
-    console.log(`[Relay] Sent ECDH ClnConnectReq (${packet.length}B total, ${body.length}B body, serial=${this.config.deviceSerial})`)
+    log.trace('relay send', {
+      'net.direction': 'send',
+      'net.bytes': packet.length,
+      'relay.bodyBytes': body.length,
+      'relay.msg': 'ClnConnectReq',
+      'relay.encrypted': true,
+      'device.serial': this.config.deviceSerial,
+    })
   }
 
   sendKeepalive(): void {
@@ -337,7 +351,13 @@ export class RelayClient extends EventEmitter {
   }
 
   private handleFrame(frame: RelayFrame): void {
-    console.log(`[Relay] Frame cmd=0x${frame.cmd.toString(16)} seq=${frame.seq} bodyLen=${frame.bodyLen} body=${frame.body.toString('hex')}`)
+    log.trace('relay recv', {
+      'net.direction': 'recv',
+      'net.bytes': frame.bodyLen,
+      'relay.cmd': `0x${frame.cmd.toString(16)}`,
+      'relay.seq': frame.seq,
+      'relay.body': frame.body.toString('hex'),
+    })
 
     // Accept any command as ConnectRsp while we're waiting for connection confirmation
     if (this.state === 'connected') {
@@ -357,7 +377,7 @@ export class RelayClient extends EventEmitter {
       return
     }
 
-    console.log(`[Relay] Unhandled frame cmd=0x${frame.cmd.toString(16)} body=${frame.body.toString('hex').substring(0, 80)}`)
+    log.info(`[Relay] Unhandled frame cmd=0x${frame.cmd.toString(16)} body=${frame.body.toString('hex').substring(0, 80)}`)
   }
 
   private handleConnectRsp(frame: RelayFrame): void {
@@ -393,11 +413,11 @@ export class RelayClient extends EventEmitter {
           streamId = attr.value.toString('utf8')
           break
         default:
-          console.log(`[Relay] ConnectRsp attr tag=0x${attr.tag.toString(16)} len=${attr.value.length} val=${attr.value.toString('hex')}`)
+          log.info(`[Relay] ConnectRsp attr tag=0x${attr.tag.toString(16)} len=${attr.value.length} val=${attr.value.toString('hex')}`)
       }
     }
 
-    console.log(`[Relay] ConnectRsp: host=${relayHost} port=${relayPort} sendRate=${sendRate} error=${errorCode} streamId=${streamId}`)
+    log.info(`[Relay] ConnectRsp: host=${relayHost} port=${relayPort} sendRate=${sendRate} error=${errorCode} streamId=${streamId}`)
 
     if (errorCode !== 0) {
       // Known relay error codes from Ghidra ConvertRelayServerError
@@ -408,7 +428,7 @@ export class RelayClient extends EventEmitter {
         0x17D7: 'device_no_relay_resource',
       }
       const name = errorNames[errorCode] ?? `unknown_${errorCode}`
-      console.log(`[Relay] Error ${errorCode} (0x${errorCode.toString(16)}): ${name}`)
+      log.error(`[Relay] Error ${errorCode} (0x${errorCode.toString(16)}): ${name}`)
       this.emit('error', new Error(`Relay error: ${name} (${errorCode})`))
       return
     }
