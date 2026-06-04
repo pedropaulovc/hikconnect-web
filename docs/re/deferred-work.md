@@ -71,13 +71,19 @@ type: project
       `wrapSessionKey` = AES-256-ECB(S), ChaCha20 body, HMAC-SHA256 MAC over the CRC-32 `"%u%u"`
       string) and `relay-client.ts` wired to it. Unit tests reproduce the captured ECDH/wrap/ChaCha20
       vectors byte-for-byte (`crypto-ecdh.test.ts`).
-    - **Live relay still `0x2715`** (`scripts/test-relay-connect.ts` against the VTM, which presents a
-      pubkey). The ECDH crypto + packet assembly now match the DLL disassembly byte-for-byte (incl. the
-      8-byte HMAC-update truncation and crc32(header)-first order), so the remaining cause is most
-      likely the **`ClnConnectReq` body content**: the TLV body in `relay-client.ts` is from
-      `libCASClient.dll` RE (different DLL) and may be wrong for the ECDH relay path. **Next step:** RE
-      `OpenNetStream.dll`'s `SendClnConnectReq` (the real caller of `EncECDHReqPackage`) to capture the
-      exact plaintext body it builds, then diff against `relay-client.ts`.
+    - **RESOLVED — crypto is correct; `0x2715` is a key/provisioning mismatch, NOT a code bug.** A TS
+      packet (self-consistent keypair) fed to the DLL's own server decryptor (`FUN_180003a40`, driven
+      in-process via Frida) returns **rc=0**: MAC verifies, wrap → exact session key, ChaCha20 body →
+      exact plaintext — so `crypto.ts` reproduces `EncECDHReqPackage` byte-for-byte. And **every** body
+      shape incl. an **empty body** yields the *identical* `0x2715` (`scripts/_relay_probe.ts`), so the
+      relay fails at **MAC verification before parsing the body** → the **shared secret doesn't match**:
+      the API relay/VTM pubkey (`query/relay` + `streaming/vtm` both return the same key, ver 1) does
+      not correspond to the relay node's private key for this device/account. Consistent with the
+      device's **`vtduServerPublicKey` = all-zeros** (cloud hasn't provisioned the ECDH relay path for
+      L38239367 — which is why iVMS uses P2P, never this relay, for it). **⇒ The "body content /
+      `SendClnConnectReq` RE" lines below are SUPERSEDED — it is not the body.** To stream over the
+      relay you need a device/account where the ECDH relay is provisioned (non-zero
+      `vtduServerPublicKey`) so the API returns a relay key matching the node's private key.
     - **Capture attempts (2026-06-04, both blocked in this env):** (a) static — `OpenNetStream.dll`
       imports `ecdhCryption` by **ordinal**, and the kawaiidra MCP can't run Jython scripts / page
       imports / resolve ordinal imports, so the `EncECDHReqPackage` call site couldn't be located;
