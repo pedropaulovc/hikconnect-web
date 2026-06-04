@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import { FfmpegHlsPipe, buildHlsFfmpegArgs } from '../ffmpeg-pipe'
+import { describe, it, expect, afterEach } from 'vitest'
+import { FfmpegHlsPipe, buildHlsFfmpegArgs, resolveEncoder } from '../ffmpeg-pipe'
 
 describe('FFmpeg HLS pipe', () => {
   it('constructs with output directory', () => {
@@ -82,6 +82,75 @@ describe('buildHlsFfmpegArgs', () => {
       const args = buildHlsFfmpegArgs('libx264', 'sub', 2, OUT, PLAYLIST)
       expect(args).toContain('hls')
       expect(args[args.length - 1]).toBe(PLAYLIST)
+    })
+  })
+
+  describe('passthrough (HEVC stream-copy, no transcode)', () => {
+    it('stream-copies the HEVC payload — no software or GPU encoder', () => {
+      const args = buildHlsFfmpegArgs('passthrough', 'main', 2, OUT, PLAYLIST)
+      expect(args[args.indexOf('-c:v') + 1]).toBe('copy')
+      expect(args).not.toContain('libx264')
+      expect(args).not.toContain('h264_nvenc')
+      expect(args).not.toContain('hevc_cuvid')
+      expect(args).not.toContain('cuda')
+    })
+
+    it('never downscales — serves the native source resolution (main 4K, sub 640×480)', () => {
+      for (const q of ['main', 'sub'] as const) {
+        const args = buildHlsFfmpegArgs('passthrough', q, 2, OUT, PLAYLIST)
+        expect(args).not.toContain('-vf')
+        expect(args.join(' ')).not.toMatch(/scale=/)
+      }
+    })
+
+    it('emits fMP4 segments tagged hvc1 so browsers recognise the HEVC track', () => {
+      const args = buildHlsFfmpegArgs('passthrough', 'main', 2, OUT, PLAYLIST)
+      expect(args[args.indexOf('-hls_segment_type') + 1]).toBe('fmp4')
+      expect(args[args.indexOf('-tag:v') + 1]).toBe('hvc1')
+      // fMP4 uses .m4s media segments + an init.mp4 header, not .ts
+      expect(args.join(' ')).toMatch(/seg_%03d\.m4s/)
+      expect(args.join(' ')).not.toMatch(/seg_%03d\.ts/)
+    })
+
+    it('runs the hevc_metadata bitstream filter so the fMP4 init carries a populated hvcC', () => {
+      // The raw `-f hevc` demuxer does not propagate VPS/SPS/PPS into codec
+      // extradata, so a plain `-c:v copy` writes an EMPTY hvcC box — the HLS.js
+      // MSE decoder then has no decoder-config record and the 4K stream won't
+      // play. The hevc_metadata BSF re-parses the parameter sets back into
+      // extradata so the mov muxer builds a valid hvcC. Regression guard.
+      const args = buildHlsFfmpegArgs('passthrough', 'main', 2, OUT, PLAYLIST)
+      expect(args[args.indexOf('-bsf:v') + 1]).toBe('hevc_metadata')
+    })
+
+    it('emits an HLS playlist at the given path with the requested segment time', () => {
+      const args = buildHlsFfmpegArgs('passthrough', 'main', 4, OUT, PLAYLIST)
+      expect(args).toContain('hls')
+      expect(args[args.length - 1]).toBe(PLAYLIST)
+      expect(args[args.indexOf('-hls_time') + 1]).toBe('4')
+    })
+
+    it('copies HEVC out of the MPEG-PS playback container too', () => {
+      const args = buildHlsFfmpegArgs('passthrough', 'main', 2, OUT, PLAYLIST, 'mpeg')
+      expect(args[args.indexOf('-f') + 1]).toBe('mpeg')
+      expect(args[args.indexOf('-c:v') + 1]).toBe('copy')
+      expect(args[args.length - 1]).toBe(PLAYLIST)
+    })
+  })
+
+  describe('resolveEncoder (HLS_ENCODER override)', () => {
+    afterEach(() => {
+      delete process.env.HLS_ENCODER
+    })
+
+    it('forces the configured backend regardless of GPU detection', () => {
+      process.env.HLS_ENCODER = 'passthrough'
+      expect(resolveEncoder()).toBe('passthrough')
+    })
+
+    it('ignores an unknown value and falls back to auto-detection', () => {
+      process.env.HLS_ENCODER = 'bogus'
+      // auto-detect returns a real backend (libx264 in CI with no GPU)
+      expect(['nvenc', 'libx264']).toContain(resolveEncoder())
     })
   })
 
