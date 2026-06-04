@@ -76,6 +76,15 @@ export async function POST(req: Request) {
       }
     })
 
+    // LiveStream emits 'error' on a P2P/stream failure after start() resolves. A
+    // Node EventEmitter 'error' with no listener is rethrown uncaught and would
+    // crash the worker — so handle it: log and tear the stream down (releasing
+    // the P2P socket + ffmpeg; the stateChange handler drops the session entry).
+    stream.on('error', (err: Error) => {
+      console.error(`[stream ${sessionId}] ${err.message}`)
+      void stream.stop()
+    })
+
     await stream.start()
 
     return NextResponse.json({
