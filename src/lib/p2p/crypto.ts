@@ -176,9 +176,12 @@ export function buildEcdhReqPacket(opts: {
   // MAC = HMAC-SHA256(masterKey, ascii("%u%u" % (crc32(header[0:134]), crc32(body))))
   // Arg order confirmed from FUN_180002b30 disassembly: sprintf_s(buf,0x20,"%u%u", R9D=crcHeader,
   // [rsp+0x20]=crcBody) — i.e. HEADER crc first, then BODY crc.
+  // ...and the HMAC update length is *8* (MOV R8D,0x8 in the disasm): only the first 8 bytes of the
+  // zero-padded CRC string are MAC'd (truncated if longer, zero-padded if shorter).
   const crcHead = crc32(head134)
   const crcBody = crc32(encBody)
-  const macMsg = Buffer.from(`${crcHead >>> 0}${crcBody >>> 0}`, 'ascii')
+  const macMsg = Buffer.alloc(8) // zero-init, mirrors the DLL's cleared 0x20 buffer
+  macMsg.write(`${crcHead >>> 0}${crcBody >>> 0}`, 'ascii') // truncates to 8 bytes if longer
   const mac = createHmac('sha256', masterKey).update(macMsg).digest()
 
   return Buffer.concat([head134, encBody, mac])
