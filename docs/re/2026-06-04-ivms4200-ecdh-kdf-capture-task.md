@@ -192,8 +192,9 @@ key (AES-256 CTR_DRBG; proven non-deterministic). The secret-binding lives in `E
 - off 134 = body **ChaCha20**(key = session key, counter 0, nonce `01 00…`).
 - last 32B = **HMAC**(key = shared secret) over `sprintf("%u%u", crc32(body), crc32(header))`.
 
-**Verified vectors:** 3 ECDH sessions (DLL == independent Python ECDH, byte-for-byte) + the AES-256-ECB
-wrap. Full spec + vectors: `docs/re/ecdh-kdf-vectors.md`.
+**Verified vectors (DLL == Python, byte-for-byte):** 3 ECDH sessions, the AES-256-ECB wrap, and the
+ChaCha20 body. MAC = HMAC-SHA256 confirmed (SHA-256 IV at hash dispatcher case 6). Full spec +
+vectors: `docs/re/ecdh-kdf-vectors.md`.
 
 **Address↔Ghidra mapping (this build, SHA256 `C7768BF8…0B62DB`):** preferred ImageBase
 **0x180000000** confirmed ⇒ `runtime = module.base + (ghidraAddr − 0x180000000)`. The DLL **exports the

@@ -79,16 +79,17 @@ Fixed overhead = 11 + 32 + 91 + 32 = **166 bytes** (matches task doc).
   **standard AES-256-ECB(key = shared secret)** encrypting the 32B session key. (Task doc had the
   direction reversed: it is `E_S(K)`, not `E_K(S)`.) **VERIFIED**: `FUN_180009cd0` reproduces
   Python `cryptography` AES-256-ECB byte-for-byte (no byte-swap, no variant) — see vectors below.
-- **body:** `FUN_180012b50/c90/d40` ⇒ **ChaCha20** with key = session key `K`. `FUN_180012c90` sets
-  state word 12 (counter) = 0 and words 13–15 (nonce) = `param2[0..2]`; in the packet path
-  `param2 = {1,0,0}` ⇒ **counter=0, nonce = `01 00 00 00 00 00 00 00 00 00 00 00`** (confirm
-  counter/nonce split + endianness against a real body before shipping).
+- **body:** `FUN_180012b50/c90/d40` ⇒ **standard ChaCha20** (RFC 7539) with key = session key `K`.
+  `FUN_180012c90` sets state word 12 (counter) = 0 and words 13–15 (nonce) = `param2[0..2]`; packet
+  path `param2 = {1,0,0}` ⇒ **counter=0, nonce words {1,0,0}**, i.e. the 16-byte `cryptography`
+  nonce = `00000000 01000000 00000000 00000000`. **VERIFIED** byte-for-byte vs Python ChaCha20 — see
+  vectors below.
 - **MAC:** `crcB = CRC32(body)`, `crcH = CRC32(header[0:0x86])`; `msg = sprintf("%u%u", crcB, crcH)`
   (ASCII decimal concatenation, NUL-padded in a 0x20 buffer); then `FUN_180011fa0(mac, &DESC@0x18003e3f0, 1)`,
   `FUN_1800124b0(mac, S, 0x20)` (**MAC key = shared secret, 32B**), finalize `FUN_180012610` → **32B
-  MAC** appended. `FUN_1800124b0` is **textbook HMAC** (ipad `0x36` / opad `0x5c` confirmed); 32B
-  output ⇒ **HMAC-SHA256** (SM3 also 32B — to be 100% sure, diff the case-`DESC[+8]` handler against
-  SHA-256 round constants).
+  MAC** appended. `FUN_1800124b0` is **textbook HMAC** (ipad `0x36` / opad `0x5c`); the hash dispatcher
+  `FUN_180012130` case 6 uses the canonical SHA-256 IV (`6a09e667…5be0cd19`) and the output is 32B ⇒
+  **HMAC-SHA256, confirmed** (case 5 SHA-224 would be 28B; MD5/SHA-1 are cases 3/4).
 
 **Server side (inferred):** ECDH→`S`; AES-256-ECB-decrypt off-11 with `S` → `K`; ChaCha20-decrypt body
 with `K`; verify MAC with `S`. So the client can pick `K` randomly — no need to reproduce
@@ -134,19 +135,32 @@ wrap (32B)        = 555a9210d6ed8d712cad8ffedb1fb46e9c28d36c35bf8e49d18eafc5be87
 ```
 AES single-block sanity: key `000102…1f`, pt `000102…0f` → `5a6e045708fb7196f02e553d02c3a692` (== standard AES-256).
 
-Raw logs in `C:\re\captures\{ecdh-vectors2,primitives}.log`. DRBG-internal capture hooks (for a live
-handshake, if ever forced): `scripts/frida/hook-ecdh-ivms-windows.js`.
+**Body cipher (ChaCha20), DLL == Python byte-for-byte:**
+```
+key (session key) = 5163023492d45e7b2f11a83b9523bf7170b1a948590cf60f95937778e037fd23
+nonce (16B)       = 00000000 01000000 00000000 00000000    (counter=0, nonce words {1,0,0})
+plaintext (40B)   = 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f2021222324252627
+ciphertext (40B)  = 4d6e35baf580790ced939eb7cd5aa01f51cba5626b198a43ea8b01982b2948b9041aa2beb92f9b1e   ✓ MATCH
+```
+
+Raw logs in `C:\re\captures\{ecdh-vectors2,primitives,chacha}.log`. Drivers `drive_ecdh2.js` /
+`drive_primitives.js` / `drive_chacha.js`. Handshake capture hooks (for a live handshake, if ever
+forced): `scripts/frida/hook-ecdh-ivms-windows.js`.
 
 ## Status / remaining
 
-- ✅ Stage 1 ECDH: standard P-256, 3 vectors byte-verified.
-- ✅ Stage 3 wrap: standard AES-256-ECB(sharedSecret), vector byte-verified.
-- ✅ Key formats, personalization strings, CRC-32, HMAC structure, ChaCha20 identification.
-- ⏳ Byte-verify a full `EncECDHReqPackage` packet (needs driving the session-tree + SetSessionEncKey
-  path) to lock down ChaCha20 nonce/counter and the MAC hash (HMAC-SHA256 vs SM3).
+- ✅ Stage 1 ECDH: standard raw P-256, 3 vectors byte-verified.
+- ✅ Wrap (off 11): standard AES-256-ECB(sharedSecret), vector byte-verified.
+- ✅ Body (off 134): standard ChaCha20(sessionKey, ctr 0, nonce {1,0,0}), vector byte-verified.
+- ✅ MAC (end): HMAC-SHA256(sharedSecret), confirmed (SHA-256 IV @ hash-dispatcher `FUN_180012130`
+  case 6; 32B output rules out SHA-224/SM3-as-28B and MD5/SHA-1).
+- ✅ Key formats, personalization strings (`"ezviz-ecdh"`/`"gen_key"`), CRC-32.
+- ⏳ Optional: capture one full `EncECDHReqPackage` packet end-to-end (couldn't drive the export — the
+  session-tree lookup rejects a synthetic session id and the void wrapper hides the error). Not a
+  blocker: every primitive above is independently verified, so packet assembly is fully specified.
 - ⏳ Wire into `src/lib/p2p/relay-client.ts` / `vtm-client.ts`: ECDH→S, random K, off-11 =
-  AES-256-ECB(S).encrypt(K), body = ChaCha20(K), MAC = HMAC(S, "%u%u"%(crc32(body),crc32(hdr))).
-  Then re-test relay `0x2715`.
+  AES-256-ECB(S).encrypt(K), body = ChaCha20(K, ctr0, nonce {1,0,0}),
+  MAC = HMAC-SHA256(S, "%u%u"%(crc32(body),crc32(header[0:0x86]))). Then re-test relay `0x2715`.
 
 > Note: the live relay/VTM handshake could not be force-triggered from iVMS (direct P2P kept winning;
 > a full outbound-UDP block on Video.C broke P2P signaling rather than falling back to the
