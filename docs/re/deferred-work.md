@@ -78,6 +78,15 @@ type: project
       `libCASClient.dll` RE (different DLL) and may be wrong for the ECDH relay path. **Next step:** RE
       `OpenNetStream.dll`'s `SendClnConnectReq` (the real caller of `EncECDHReqPackage`) to capture the
       exact plaintext body it builds, then diff against `relay-client.ts`.
+    - **Capture attempts (2026-06-04, both blocked in this env):** (a) static — `OpenNetStream.dll`
+      imports `ecdhCryption` by **ordinal**, and the kawaiidra MCP can't run Jython scripts / page
+      imports / resolve ordinal imports, so the `EncECDHReqPackage` call site couldn't be located;
+      (b) dynamic — iVMS on this device/NAT does **not** fall back to the relay when P2P is blocked
+      (full + surgical STUN/P2P UDP firewall blocks both just fail the stream, no relay handshake), so
+      its live `ClnConnectReq` body couldn't be captured. **Recommended:** standalone Ghidra (not the
+      MCP) for the static path, OR capture on a network where iVMS naturally uses the VTM relay
+      (symmetric NAT), OR experiment with body TLV tags/fields against the live relay
+      (`scripts/test-relay-connect.ts`) — the crypto is correct, so only the plaintext body is wrong.
     - **Windows RE method** (`docs/re/2026-06-04-ivms4200-ecdh-kdf-capture-task.md`): drove the DLL's
       exported pipeline in-process via Frida `NativeFunction` (live relay handshake couldn't be forced).
     - Prior Android note (`docs/re/ecdh-frida-capture.md`): ECDH not triggered for device L38239367
