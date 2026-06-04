@@ -87,6 +87,29 @@ type: project
       MCP) for the static path, OR capture on a network where iVMS naturally uses the VTM relay
       (symmetric NAT), OR experiment with body TLV tags/fields against the live relay
       (`scripts/test-relay-connect.ts`) — the crypto is correct, so only the plaintext body is wrong.
+    - **RECOMMENDED PLAN (2026-06-04) — do NOT build symmetric-NAT infra first.** Both prior
+      dead-ends were incidental *tooling* limits, not real walls, and the body is statically present
+      in `OpenNetStream.dll` — so reuse the exact method that already cracked the crypto:
+      1. **Cheap probe first (~1h, no RE):** the crypto is verified correct, so the body is probably
+         close. Throw the obvious fixes at the live relay via `scripts/test-relay-connect.ts` — the
+         ECDH-path body most likely needs the session JWT, `userId`, `clientId`, and stream params as
+         TLVs that the `libCASClient`-derived body is missing or mis-tagging. If one shape clears
+         `0x2715`, done — no Ghidra needed.
+      2. **Primary if probe fails — standalone Ghidra (GUI, NOT the kawaiidra MCP) + in-process Frida
+         drive.** The "imports by ordinal" wall only exists in the MCP; in the Ghidra GUI, map the
+         ordinal to `EncECDHReqPackage` via `ecdhCryption.dll`'s export table, follow xrefs to its
+         import thunk → that lands in `SendClnConnectReq`. Read the TLV body it assembles. Then dump
+         it live by hooking/`NativeFunction`-driving that body-builder **in-process** (same trick used
+         for the crypto vectors) to capture the plaintext body *before* ChaCha20 — **this never needs
+         iVMS to actually relay**, which is exactly why it sidesteps the dynamic-capture dead-end.
+         Diff the result against `relay-client.ts`.
+      3. **Last resort — symmetric NAT.** Only if the body-builder reads live socket/session state
+         that can't be synthesized in-process. It is the highest-effort, least-certain path: it rests
+         on the *unverified* assumption that iVMS relays under symmetric NAT (blunt UDP firewalling
+         did not). If forced down this road, prefer a **cloud NAT Gateway** (Azure/AWS — symmetric by
+         definition, zero tuning) over Linux `iptables MASQUERADE --random-fully`; verify the NAT type
+         with `pystun3` and confirm iVMS opens TCP to `148.153.53.29:8554` + an ECDH handshake before
+         trusting it.
     - **Windows RE method** (`docs/re/2026-06-04-ivms4200-ecdh-kdf-capture-task.md`): drove the DLL's
       exported pipeline in-process via Frida `NativeFunction` (live relay handshake couldn't be forced).
     - Prior Android note (`docs/re/ecdh-frida-capture.md`): ECDH not triggered for device L38239367
