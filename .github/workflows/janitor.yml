@@ -89,7 +89,7 @@ jobs:
         run: for i in 1 2 3; do npm install yaml && break || sleep 15; done
 
       - name: Calculate and create task
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           # Requires a user PAT from a *user* with Copilot entitlement, with read+write access to
           # actions, contents, issues, and pull requests, and permission to assign issues.
