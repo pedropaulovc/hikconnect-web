@@ -12,10 +12,11 @@ streaming Hikvision NVR/camera video over the Hik-Connect cloud.
 ## Workflow
 
 - Never commit directly to `main` — open a PR (the `pre-commit` hook blocks it).
-- CI required checks: `lint`, `test`, `build`. Keep them green.
+- CI required checks: `lint`, `test`, `build`, `wait-for-deployment`,
+  `e2e-tests-prod`. Keep them green.
 - `npm run lint` / `typecheck` / `test` / `build:next` before pushing.
 - Merges are merge-commits only (no squash/rebase); PRs auto-merge once the
-  required checks pass and the human review gate is approved.
+  required checks pass.
 
 ## Reference
 
