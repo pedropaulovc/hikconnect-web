@@ -2,84 +2,81 @@ name: CI/CD Pull Request
 permissions:
   contents: read
   actions: read
+  checks: read
   pull-requests: write
 
 on:
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to run workflow on'
+        required: true
+        type: number
+
+env:
+  NODE_VERSION: "24.15.0"
+  PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
 
 concurrency:
-  group: pr-${{ github.event.pull_request.number }}
+  group: pr-${{ github.event.pull_request.number || inputs.pr_number }}
   cancel-in-progress: true
 
 jobs:
-  lint:
-    runs-on: ubuntu-slim
-    steps:
-      - name: Checkout repository
-        timeout-minutes: 1
-        uses: actions/checkout@v6
-
-      - name: Setup Node.js
-        timeout-minutes: 1
-        uses: actions/setup-node@v6
-        with:
-          node-version: "24"
-          cache: "npm"
-
-      - name: Install dependencies
-        timeout-minutes: 2
-        run: for i in 1 2 3; do if npm ci; then break; elif [ "$i" -eq 3 ]; then exit 1; else sleep 15; fi; done
-
-      - name: Run linter
-        timeout-minutes: 2
-        run: npm run lint
-
-  typecheck:
-    runs-on: ubuntu-slim
-    steps:
-      - name: Checkout repository
-        timeout-minutes: 1
-        uses: actions/checkout@v6
-
-      - name: Setup Node.js
-        timeout-minutes: 1
-        uses: actions/setup-node@v6
-        with:
-          node-version: "24"
-          cache: "npm"
-
-      - name: Install dependencies
-        timeout-minutes: 2
-        run: for i in 1 2 3; do if npm ci; then break; elif [ "$i" -eq 3 ]; then exit 1; else sleep 15; fi; done
-
-      - name: Run typecheck
-        timeout-minutes: 2
-        run: npm run typecheck
-
-  unit-tests:
+  lockfile-check:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        timeout-minutes: 1
-        uses: actions/checkout@v6
-
-      - name: Setup Node.js
-        timeout-minutes: 1
-        uses: actions/setup-node@v6
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
-          node-version: "24"
+          node-version: ${{ env.NODE_VERSION }}
           cache: "npm"
+      - name: Verify package-lock.json is normalized
+        run: |
+          npm install --ignore-scripts
+          if ! git diff --exit-code package-lock.json; then
+            echo "::error::package-lock.json is not normalized. Run 'npm run sync-lockfile' and commit the result."
+            exit 1
+          fi
 
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
       - name: Install dependencies
-        timeout-minutes: 2
-        run: for i in 1 2 3; do if npm ci; then break; elif [ "$i" -eq 3 ]; then exit 1; else sleep 15; fi; done
+        run: for i in 1 2 3; do npm ci && break || sleep 15; done
+      - run: npm run lint:check
 
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+      - name: Install dependencies
+        run: for i in 1 2 3; do npm ci && break || sleep 15; done
+      - run: npm run typecheck
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+      - name: Install dependencies
+        run: for i in 1 2 3; do npm ci && break || sleep 15; done
       - name: Run unit tests with coverage
-        timeout-minutes: 2
         run: npm run test:coverage
-
       - name: Download base coverage
         if: always()
         id: download-coverage-baseline
@@ -90,38 +87,135 @@ jobs:
           name: coverage-baseline
           path: coverage-baseline
         continue-on-error: true
-
       - name: Coverage report with delta
         if: always()
         uses: davelosert/vitest-coverage-report-action@v2
         with:
           file-coverage-mode: changes
-          pr-number: ${{ github.event.pull_request.number }}
+          pr-number: ${{ env.PR_NUMBER }}
           json-summary-compare-path: ${{ steps.download-coverage-baseline.outcome == 'success' && 'coverage-baseline/coverage-summary.json' || '' }}
           threshold-icons: "{0: '🔴', 70: '🟡', 75: '🔵', 85: '🟢'}"
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+      - name: Install dependencies
+        run: for i in 1 2 3; do npm ci && break || sleep 15; done
+      - name: Build Next.js app
+        run: npm run build:next
+
+  spec-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+      - name: Install dependencies
+        run: for i in 1 2 3; do npm ci && break || sleep 15; done
+      - name: Validate OpenSpec specs and changes
+        run: npm run spec:validate
+
+  storybook-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+      - name: Install dependencies
+        run: for i in 1 2 3; do npm ci && break || sleep 15; done
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium-headless-shell
+      - run: npm run test:storybook
 
   e2e-tests:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        timeout-minutes: 1
-        uses: actions/checkout@v6
-
-      - name: Setup Node.js
-        timeout-minutes: 1
-        uses: actions/setup-node@v6
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
-          node-version: "24"
+          node-version: ${{ env.NODE_VERSION }}
           cache: "npm"
-
       - name: Install dependencies
-        timeout-minutes: 2
-        run: for i in 1 2 3; do if npm ci; then break; elif [ "$i" -eq 3 ]; then exit 1; else sleep 15; fi; done
-
+        run: for i in 1 2 3; do npm ci && break || sleep 15; done
       - name: Install Playwright browsers
-        timeout-minutes: 1
         run: npx playwright install --with-deps chromium-headless-shell
-
-      - name: Run E2E tests
-        timeout-minutes: 3
+      - name: Run E2E tests (mock mode)
         run: npm run test:e2e
+
+  wait-for-deployment:
+    runs-on: ubuntu-latest
+    outputs:
+      preview-url: ${{ steps.wait.outputs.preview-url }}
+    steps:
+      - name: Wait for Cloudflare Workers build + preview URL
+        id: wait
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          if [ -n "${{ github.event.pull_request.head.sha }}" ]; then
+            SHA="${{ github.event.pull_request.head.sha }}"
+          else
+            SHA=$(gh api repos/${{ github.repository }}/pulls/${{ env.PR_NUMBER }} --jq '.head.sha')
+          fi
+          echo "Waiting for Cloudflare Workers build for SHA: ${SHA:0:7}"
+          # Cloudflare Workers Builds posts a check run named "Workers Builds: <worker>"
+          # whose output summary carries the version-specific Preview URL. Poll it.
+          for i in $(seq 1 60); do
+            RUN=$(gh api "repos/${{ github.repository }}/commits/$SHA/check-runs" \
+              --jq '[.check_runs[] | select(.name | startswith("Workers Builds"))] | sort_by(.started_at) | last' 2>/dev/null)
+            STATUS=$(echo "$RUN" | jq -r '.status // empty' 2>/dev/null)
+            if [ "$STATUS" = "completed" ]; then
+              CONCLUSION=$(echo "$RUN" | jq -r '.conclusion // empty')
+              if [ "$CONCLUSION" != "success" ]; then
+                echo "::error::Workers build did not succeed: ${CONCLUSION:-unknown}"
+                exit 1
+              fi
+              SUMMARY=$(echo "$RUN" | jq -r '.output.summary // empty')
+              URL=$(echo "$SUMMARY" | grep -oiP 'Preview URL:\s*\K\S+' | head -1)
+              [ -z "$URL" ] && URL=$(echo "$SUMMARY" | grep -oiP 'Preview Alias URL:\s*\K\S+' | head -1)
+              if [ -z "$URL" ]; then
+                echo "::error::Workers build succeeded but no preview URL in summary"
+                exit 1
+              fi
+              echo "✅ Preview ready: $URL"
+              echo "preview-url=$URL" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "Workers build status: ${STATUS:-pending} (attempt $i/60)"
+            sleep 5
+          done
+          echo "::error::Timeout waiting for Cloudflare Workers build"
+          exit 1
+
+  e2e-tests-prod:
+    needs: [wait-for-deployment]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+      - name: Install dependencies
+        run: for i in 1 2 3; do npm ci && break || sleep 15; done
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium-headless-shell
+      - name: Run E2E tests (prod mode)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          E2E_BASE_URL: ${{ needs.wait-for-deployment.outputs.preview-url }}
+        run: npm run test:e2e:prod
+
+  # Preview deployments are handled by Cloudflare Workers Builds (connected via
+  # the Cloudflare GitHub integration) once the Worker is provisioned.

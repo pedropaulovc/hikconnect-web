@@ -5,30 +5,27 @@ updates:
     schedule:
       interval: "weekly"
     groups:
-      playwright:
+      next:
         patterns:
-          - "playwright"
-          - "@playwright/test"
-          - "eslint-plugin-playwright"
-      vitest:
-        patterns:
-          - "vitest"
-          - "@vitest/*"
-      testing-library:
-        patterns:
-          - "@testing-library/*"
+          - "next"
+          - "eslint-config-next"
+          - "@opennextjs/*"
       react:
         patterns:
           - "react"
           - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
+      vitest:
+        patterns:
+          - "vitest"
+          - "@vitest/*"
       eslint:
         patterns:
           - "eslint"
           - "@eslint/*"
-          - "eslint-*"
           - "typescript-eslint"
-    ignore:
-      # ESLint 10.0.x breaks eslint-plugin-react (used by eslint-config-next).
-      # Remove when eslint-config-next supports ESLint 10.
-      - dependency-name: "eslint"
-        versions: [">=10.0.0", "<10.1.0"]
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

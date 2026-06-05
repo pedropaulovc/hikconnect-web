@@ -1,0 +1,12 @@
+schema: spec-driven
+
+# Project context shown to AI when creating artifacts.
+context: |
+  HikConnect Web: greenfield, production-grade, multitenant service for streaming
+  Hikvision NVR/camera video over the Hik-Connect cloud.
+  Tech stack: Next.js 16 (App Router) on Cloudflare Workers (@opennextjs/cloudflare),
+  React 19, TypeScript (strict), Vitest, Playwright, Storybook.
+  Conventions: flat code, early returns, enums (string unions) over cross-boundary
+  booleans, no gratuitous backwards-compat. See CLAUDE.md for standards.
+  The reverse-engineered Hik-Connect P2P streaming protocol lives on branch
+  feat/reverse-engineering-prototype (docs/re/).

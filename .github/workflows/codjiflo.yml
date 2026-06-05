@@ -1,0 +1,74 @@
+name: CodjiFlo Iteration Tracking
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: codjiflo-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  capture-iteration:
+    name: Capture PR iteration
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Capture PR iteration
+        id: capture
+        uses: pedropaulovc/codjiflo/action@c5690255c572537fb6a6a213795307b6e0f07e90 # main as of 2026-05-19
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pr-number: ${{ github.event.pull_request.number }}
+
+      - name: Upload iteration artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: codjiflo-pr-${{ github.event.pull_request.number }}-${{ github.run_id }}
+          path: codjiflo-data/
+          retention-days: 90
+
+      - name: Update PR comment with artifact ID
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+          ITERATION_COUNT: ${{ steps.capture.outputs.iteration-count }}
+        run: |
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
+          BODY="<!-- codjiflo-data -->
+          ### CodjiFlo Iteration Tracking
+
+          **Iterations captured**: ${ITERATION_COUNT}
+          **Last updated**: ${TIMESTAMP}
+          **Artifact**: \`${ARTIFACT_ID}\`
+          **Run ID**: ${{ github.run_id }}
+
+          ---
+          <details>
+          <summary>What is this?</summary>
+
+          This comment is automatically updated by the [CodjiFlo GitHub Action](https://github.com/pedropaulovc/codjiflo) to enable force-push resilient code review with iteration tracking.
+
+          The artifact referenced above contains iteration data that the CodjiFlo frontend uses to:
+          - Track code changes across force-pushes
+          - Enable comment persistence across code modifications
+          - Allow comparison between any two iterations
+
+          </details>"
+
+          COMMENT_ID=$(gh api repos/${{ github.repository }}/issues/${PR_NUMBER}/comments --jq '.[] | select(.body | contains("<!-- codjiflo-data -->")) | .id')
+          if [ -n "$COMMENT_ID" ]; then
+            gh api repos/${{ github.repository }}/issues/comments/$COMMENT_ID -X PATCH -f body="$BODY"
+          else
+            gh api repos/${{ github.repository }}/issues/${PR_NUMBER}/comments -f body="$BODY"
+          fi

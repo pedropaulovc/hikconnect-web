@@ -1,0 +1,57 @@
+{
+  "name": "hikconnect-web",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "cross-env NODE_OPTIONS=--use-system-ca opennextjs-cloudflare build",
+    "build:next": "cross-env NODE_OPTIONS=--use-system-ca next build",
+    "preview": "cross-env NODE_OPTIONS=--use-system-ca opennextjs-cloudflare preview",
+    "deploy": "cross-env NODE_OPTIONS=--use-system-ca opennextjs-cloudflare deploy",
+    "start": "next start",
+    "lint": "eslint . --fix --quiet --max-warnings 0",
+    "lint:check": "eslint . --quiet --max-warnings 0",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --reporter=dot",
+    "test:coverage": "vitest run --coverage --coverage.reporter=text --coverage.reporter=json --coverage.reporter=json-summary --coverage.reporter=html --reporter=dot",
+    "test:storybook": "vitest --config=vitest.storybook.config.ts --reporter=dot",
+    "test:e2e": "cross-env E2E_DEPENDENCIES_MODE=mock playwright test --reporter=dot",
+    "test:e2e:prod": "cross-env E2E_DEPENDENCIES_MODE=prod playwright test --reporter=dot",
+    "storybook": "storybook dev -p 6006 --quiet",
+    "build-storybook": "storybook build --quiet",
+    "spec:validate": "openspec validate --all --strict",
+    "sync-lockfile": "npm install --ignore-scripts"
+  },
+  "dependencies": {
+    "next": "^16.2.6",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.32.0",
+    "@fission-ai/openspec": "^1.3.1",
+    "@opennextjs/cloudflare": "^1.19.11",
+    "@playwright/test": "^1.49.1",
+    "@storybook/addon-vitest": "^10.4.1",
+    "@storybook/react": "^10.4.1",
+    "@storybook/react-vite": "^10.4.1",
+    "@types/node": "^25.1.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react-swc": "^4.2.3",
+    "@vitest/browser-playwright": "^4.1.7",
+    "@vitest/coverage-v8": "^4.0.17",
+    "cross-env": "^10.1.0",
+    "eslint": "^9.32.0",
+    "eslint-config-next": "^16.2.6",
+    "storybook": "^10.4.1",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.60.1",
+    "vitest": "^4.0.17",
+    "wrangler": "^4.96.0"
+  }
+}

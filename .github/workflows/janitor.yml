@@ -1,0 +1,186 @@
+name: Janitor
+
+on:
+  schedule:
+    - cron: '0 14 */3 * *' # 2pm UTC every 3 days
+
+  workflow_dispatch:
+    inputs:
+      task_index:
+        description: 'Zero-based task index to create. Leave empty for automatic calculation.'
+        required: false
+        type: string
+      model:
+        description: 'AI model for Copilot coding agent'
+        required: false
+        type: choice
+        default: 'claude-opus-4.5'
+        options:
+          - claude-opus-4.5
+          - claude-sonnet-4.5
+          - gpt-5.1-codex-max
+          - auto
+
+env:
+  TASKS: |
+    - title: Improve code coverage
+      description: |-
+        Identify modules with low code coverage and add unit or integration tests to improve coverage
+        towards ideally 90%. Tests should focus on important business logic and edge cases.
+
+    - title: Remove unused dependencies
+      description: |-
+        Look for dependencies in package.json that are not being used in the codebase. Remove them
+        and ensure the project still builds and tests pass.
+
+    - title: Refactor duplicated code
+      description: |-
+        Find duplicated code patterns and extract them into reusable utility functions or components.
+
+    - title: Improve error handling
+      description: |-
+        Review error handling logic and add edge case handling where it's missing or incomplete.
+
+    - title: Update code comments
+      description: |-
+        Improve code comments, add missing comments for complex logic, update outdated ones and remove
+        redundant ones.
+
+    - title: Remove dead code
+      description: |-
+        Identify and remove unused functions, variables, exports, and dead code branches. Also remove
+        one-off debugging code added by accident. Knip and ts-prune can help with this.
+
+    - title: Optimize performance
+      description: |-
+        Profile the application using the test suite, identify performance issues, and implement optimizations.
+
+    - title: Review folder structure
+      description: |-
+        Pick a random folder in the codebase, inspect its contents and reflect if this is intuitive to
+        a junior engineer who has read the README.md and CLAUDE.md. Suggest improvements if needed.
+
+    - title: Strengthen existing tests
+      description: |-
+        Pick a random test file and inspect its assertions. Reflect if they actually test behavior or
+        just make weak assertions that won't fail most of the time. Look at the code under test for
+        important business logic and edge cases that should be well covered, and add assertions or tests.
+
+    - title: Add/update folder README
+      description: |-
+        Pick a random folder in the codebase other than the root and see if it represents a well defined
+        piece of the product or code architecture. If so, create or update a readme describing at a high
+        level what it contains and points to important entry points or relevant algorithms.
+
+    - title: Update root README.md and CLAUDE.md
+      description: |-
+        README.md is for humans (quick starts, project description). CLAUDE.md provides precise,
+        agent-focused guidance for being an effective engineer in the codebase. Keep CLAUDE.md TERSE —
+        agent context is precious. Inspect both, explore the codebase, and add/update/remove information
+        to streamline them.
+
+jobs:
+  create-janitor-issue:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Install dependencies
+        run: for i in 1 2 3; do npm install yaml && break || sleep 15; done
+
+      - name: Calculate and create task
+        uses: actions/github-script@v8
+        with:
+          # Requires a user PAT from a *user* with Copilot entitlement, with read+write access to
+          # actions, contents, issues, and pull requests, and permission to assign issues.
+          github-token: ${{ secrets.HIKCONNECT_JANITOR_TOKEN }}
+          script: |
+            const yaml = require('yaml');
+            const tasksYaml = `${{ env.TASKS }}`;
+            const tasks = yaml.parse(tasksYaml);
+
+            let taskIndex = parseInt('${{ github.event.inputs.task_index }}', 10);
+            if (Number.isNaN(taskIndex) || taskIndex < 0 || taskIndex >= tasks.length) {
+              const now = new Date();
+              const start = new Date(now.getFullYear(), 0, 1);
+              const oneDay = 1000 * 60 * 60 * 24;
+              const dayOfYear = Math.floor((now - start) / oneDay) + 1;
+              const runNumber = Math.floor((dayOfYear - 1) / 3);
+              taskIndex = runNumber % tasks.length;
+            }
+
+            const repoQuery = await github.graphql(`
+              query {
+                repository(owner: "${context.repo.owner}", name: "${context.repo.repo}") {
+                  id
+                  suggestedActors(first: 100, capabilities: CAN_BE_ASSIGNED) {
+                    nodes { ... on Bot { id login } }
+                  }
+                }
+              }
+            `);
+
+            const repositoryId = repoQuery.repository.id;
+            const botId = repoQuery.repository.suggestedActors.nodes.find(
+              actor => actor.login === 'copilot-swe-agent'
+            )?.id;
+
+            if (!botId) {
+              throw new Error('Failed to find copilot-swe-agent bot ID in suggestedActors');
+            }
+
+            const task = tasks[taskIndex];
+            const today = new Date().toISOString().split('T')[0];
+            const title = `[Janitor task #${today}]: ${task.title}`;
+            const body = [
+              "This is a janitor task. The goal is to make improvements to the codebase without affecting behavior.",
+              "",
+              "**Today's task is:**",
+              "",
+              task.title,
+              "",
+              "**Description:**",
+              "",
+              task.description,
+              "",
+              "**Important notes:**",
+              "",
+              "- Add a janitor label to your PR.",
+              "- It is perfectly fine to not have anything to change.",
+              "- Only open a pull request if you believe you found something that will significantly improve maintainability, ease of understanding, or performance.",
+            ].join("\n");
+
+            const labelQuery = await github.graphql(`
+              query {
+                repository(owner: "${context.repo.owner}", name: "${context.repo.repo}") {
+                  labels(first: 100, query: "janitor") { nodes { id } }
+                }
+              }
+            `);
+            const janitorLabelId = labelQuery.repository.labels.nodes[0]?.id;
+
+            const issueResult = await github.graphql(`
+              mutation CreateIssue($input: CreateIssueInput!) {
+                createIssue(input: $input) {
+                  issue { number url title }
+                }
+              }
+            `, {
+              input: {
+                repositoryId,
+                title,
+                body,
+                labelIds: janitorLabelId ? [janitorLabelId] : [],
+                assigneeIds: [botId],
+                agentAssignment: {
+                  targetRepositoryId: repositoryId,
+                  baseRef: "main",
+                  model: '${{ github.event.inputs.model || 'claude-opus-4.5' }}'
+                }
+              },
+              headers: {
+                'GraphQL-Features': 'issues_copilot_assignment_api_support,coding_agent_model_selection'
+              }
+            });
+
+            core.info(`Created issue #${issueResult.createIssue.issue.number}: ${title}`);

@@ -1,28 +1,20 @@
 name: "Copilot Setup Steps"
 
-on: workflow_dispatch
+on:
+  workflow_dispatch:
 
 jobs:
   copilot-setup-steps:
     runs-on: ubuntu-latest
-
     permissions:
       contents: read
-
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
-
+        uses: actions/checkout@v6
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: "24"
+          node-version: "24.15.0"
           cache: "npm"
-
       - name: Install JavaScript dependencies
-        timeout-minutes: 2
-        run: for i in 1 2 3; do if npm ci; then break; elif [ "$i" -eq 3 ]; then exit 1; else sleep 15; fi; done
-
-      - name: Install Playwright browsers
-        timeout-minutes: 1
-        run: npx playwright install --with-deps chromium-headless-shell
+        run: for i in 1 2 3; do npm ci && break || sleep 15; done
