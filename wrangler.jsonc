@@ -2,6 +2,11 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "hikconnect-web",
   "main": ".open-next/worker.js",
+  // Serve the production deployment on <name>.<subdomain>.workers.dev and give
+  // every uploaded version a per-version preview URL. PR branches build as
+  // preview versions, so CI e2e-prod tests hit the branch's preview URL.
+  "workers_dev": true,
+  "preview_urls": true,
   "compatibility_date": "2025-04-01",
   // nodejs_compat is required by the OpenNext Cloudflare adapter (Node-compatible
   // server). It also populates process.env from any plain `vars` added below.

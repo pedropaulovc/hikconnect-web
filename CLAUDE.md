@@ -24,13 +24,16 @@ npm run build        # opennextjs-cloudflare build (Workers bundle)
 
 ## CI / governance
 
-- Required PR checks: **`lint`, `test`, `build`** — keep green.
+- Required PR checks: **`lint`, `test`, `build`, `wait-for-deployment`,
+  `e2e-tests-prod`** — keep green.
 - Never commit directly to `main` (the `pre-commit` hook blocks it); open a PR.
-- Merge-commits only (no squash/rebase); PRs auto-merge once required checks pass
-  and the **human review gate** deployment (`pr-review-gate` environment) is approved.
-- Full-parity workflows for OpenSpec, Storybook, Playwright e2e, and Cloudflare
-  deploy verification are present but **red until that tooling / a CF Worker +
-  domain are added** — they are non-required and don't block merge.
+- Merge-commits only (no squash/rebase); PRs auto-merge once required checks pass.
+- The Cloudflare Worker `hikconnect-web` is live: production on
+  `https://hikconnect-web.pedro-18e.workers.dev`, and each PR branch builds a
+  preview version reachable at `https://<ver8>-hikconnect-web.pedro-18e.workers.dev`
+  (preview URLs enabled via `workers_dev` + `preview_urls` in `wrangler.jsonc`).
+  `wait-for-deployment` derives that URL from the build's Version ID and
+  `e2e-tests-prod` runs Playwright against it.
 - The `janitor` workflow needs a `HIKCONNECT_JANITOR_TOKEN` secret (unset).
 
 ## Reverse-engineering prototype
