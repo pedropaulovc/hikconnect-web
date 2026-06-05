@@ -19,6 +19,8 @@ on:
 env:
   NODE_VERSION: "24.15.0"
   PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
+  WORKER_NAME: "hikconnect-web"
+  WORKERS_SUBDOMAIN: "pedro-18e"
 
 concurrency:
   group: pr-${{ github.event.pull_request.number || inputs.pr_number }}
@@ -170,7 +172,10 @@ jobs:
           fi
           echo "Waiting for Cloudflare Workers build for SHA: ${SHA:0:7}"
           # Cloudflare Workers Builds posts a check run named "Workers Builds: <worker>"
-          # whose output summary carries the version-specific Preview URL. Poll it.
+          # whose output summary carries the uploaded "Version ID:". With preview
+          # URLs enabled on the Worker, every version is reachable at
+          # https://<first-8-of-version-id>-<worker>.<subdomain>.workers.dev — derive
+          # it from the summary rather than scraping a URL the summary doesn't carry.
           for i in $(seq 1 60); do
             RUN=$(gh api "repos/${{ github.repository }}/commits/$SHA/check-runs" \
               --jq '[.check_runs[] | select(.name | startswith("Workers Builds"))] | sort_by(.started_at) | last' 2>/dev/null)
@@ -182,15 +187,27 @@ jobs:
                 exit 1
               fi
               SUMMARY=$(echo "$RUN" | jq -r '.output.summary // empty')
-              URL=$(echo "$SUMMARY" | grep -oiP 'Preview URL:\s*\K\S+' | head -1)
-              [ -z "$URL" ] && URL=$(echo "$SUMMARY" | grep -oiP 'Preview Alias URL:\s*\K\S+' | head -1)
-              if [ -z "$URL" ]; then
-                echo "::error::Workers build succeeded but no preview URL in summary"
+              VERSION_ID=$(echo "$SUMMARY" | grep -oiP 'Version ID:\s*\K[0-9a-fA-F-]+' | head -1)
+              if [ -z "$VERSION_ID" ]; then
+                echo "::error::Workers build succeeded but no Version ID in summary"
+                echo "$SUMMARY"
                 exit 1
               fi
-              echo "✅ Preview ready: $URL"
-              echo "preview-url=$URL" >> "$GITHUB_OUTPUT"
-              exit 0
+              URL="https://${VERSION_ID:0:8}-${WORKER_NAME}.${WORKERS_SUBDOMAIN}.workers.dev"
+              echo "Derived preview URL: $URL"
+              # The version preview takes a moment to go live after the build.
+              for j in $(seq 1 30); do
+                CODE=$(curl -s -m 10 -o /dev/null -w '%{http_code}' "$URL/api/health")
+                if [ "$CODE" = "200" ]; then
+                  echo "✅ Preview ready: $URL"
+                  echo "preview-url=$URL" >> "$GITHUB_OUTPUT"
+                  exit 0
+                fi
+                echo "Preview not ready (HTTP ${CODE:-000}), attempt $j/30"
+                sleep 5
+              done
+              echo "::error::Preview URL never returned 200: $URL"
+              exit 1
             fi
             echo "Workers build status: ${STATUS:-pending} (attempt $i/60)"
             sleep 5
