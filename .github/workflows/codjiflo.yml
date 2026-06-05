@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Capture PR iteration
         id: capture
@@ -31,7 +31,7 @@ jobs:
 
       - name: Upload iteration artifact
         id: upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: codjiflo-pr-${{ github.event.pull_request.number }}-${{ github.run_id }}
           path: codjiflo-data/
