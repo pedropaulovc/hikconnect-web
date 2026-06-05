@@ -30,8 +30,13 @@ dist-ssr
 .next/
 out/
 
+# OpenNext / Cloudflare Workers build output
+.open-next/
+.wrangler/
+
 # TypeScript incremental build cache
 *.tsbuildinfo
+next-env.d.ts
 
 # Test artifacts
 test-results/

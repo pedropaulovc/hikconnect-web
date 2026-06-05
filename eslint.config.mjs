@@ -2,6 +2,16 @@ import nextConfig from "eslint-config-next/core-web-vitals";
 import tseslint from "typescript-eslint";
 
 const config = [
+  {
+    ignores: [
+      "node_modules",
+      ".next",
+      ".open-next",
+      ".wrangler",
+      "coverage",
+      "next-env.d.ts",
+    ],
+  },
   ...nextConfig,
   ...tseslint.configs.recommended,
   {
@@ -11,9 +21,6 @@ const config = [
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
       ],
     },
-  },
-  {
-    ignores: ["scripts/**"],
   },
 ];
 
